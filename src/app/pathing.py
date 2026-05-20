@@ -2,40 +2,32 @@ from pathlib import Path
 from layers import Layer
 
 
-def create_logical_path(layer):
+def order_cans(cans):
     """
-    Creates a logical path through all detected cans.
+    Takes a list of Can objects and returns the Can objects
+    in a logical snake-pattern order.
 
-    The path is organized:
-    1. Top row to bottom row
-    2. Left-to-right on the first row
-    3. Right-to-left on the second row
-    4. Repeats in a snake pattern
-
-    Returns an array of coordinate pairs:
-    [(x1, y1), (x2, y2), ...]
+    This returns Can objects, NOT coordinates.
     """
-
-    cans = layer.cans
 
     if len(cans) == 0:
         return []
 
-    # Sort all cans by vertical position first
+    # Sort all cans from top to bottom
     cans_sorted = sorted(cans, key=lambda can: can.center_y)
+
+    # Use average can height to decide which cans are in the same row
+    average_height = sum(can.height for can in cans_sorted) / len(cans_sorted)
+    row_tolerance = average_height / 2
 
     rows = []
     current_row = [cans_sorted[0]]
 
-    # Use average can height to decide what counts as the same row
-    average_height = sum(can.height for can in cans_sorted) / len(cans_sorted)
-    row_tolerance = average_height / 2
-
     # Group cans into rows
     for can in cans_sorted[1:]:
-        row_center_y = sum(c.center_y for c in current_row) / len(current_row)
+        current_row_center_y = sum(c.center_y for c in current_row) / len(current_row)
 
-        if abs(can.center_y - row_center_y) <= row_tolerance:
+        if abs(can.center_y - current_row_center_y) <= row_tolerance:
             current_row.append(can)
         else:
             rows.append(current_row)
@@ -43,44 +35,85 @@ def create_logical_path(layer):
 
     rows.append(current_row)
 
-    path = []
+    ordered_cans = []
 
-    # Sort each row using a snake pattern
+    # Snake pattern:
+    # row 0: left to right
+    # row 1: right to left
+    # row 2: left to right
+    # etc.
     for row_index, row in enumerate(rows):
         if row_index % 2 == 0:
-            # First row, third row, etc: left to right
             row_sorted = sorted(row, key=lambda can: can.center_x)
         else:
-            # Second row, fourth row, etc: right to left
             row_sorted = sorted(row, key=lambda can: can.center_x, reverse=True)
 
-        for can in row_sorted:
-            path.append((can.center_x, can.center_y))
+        ordered_cans.extend(row_sorted)
 
-    return path
+    return ordered_cans
 
 
-def print_path(path):
+def order_layer(layer):
     """
-    Prints the path clearly.
+    Adds an ordered list of Can objects to the Layer object.
+
+    After this runs:
+
+    layer.order
+
+    will be a list of ordered Can objects.
     """
 
-    print("Logical path coordinates:")
+    ordered_cans = order_cans(layer.cans)
 
-    for i, coordinate in enumerate(path):
-        print(f"{i + 1}: {coordinate}")
+    # Store the ordered Can objects
+    layer.order = ordered_cans
 
-    print("\nArray output:")
-    print(path)
+    # Optional: also update layer.cans so the original cans list is ordered too
+    layer.cans = ordered_cans
+
+    layer.size = len(layer.cans)
+
+    return layer
+
+
+class OrderedLayer(Layer):
+    """
+    A Layer object that automatically orders its Can objects.
+
+    In main.py, you can do:
+
+    layers = OrderedLayer("sample_data.JSON")
+    print(layers.order)
+
+    layers.order is a list of Can objects.
+    """
+
+    def __init__(self, json_file_path):
+        super().__init__(json_file_path)
+        order_layer(self)
+
+
+def print_order(layer):
+    """
+    Prints the ordered Can objects using their center coordinates.
+    """
+
+    print("Ordered Can objects:")
+
+    for i, can in enumerate(layer.order):
+        print(
+            f"{i + 1}: "
+            f"class={can.can_class}, "
+            f"center=({can.center_x}, {can.center_y}), "
+            f"confidence={can.confidence}"
+        )
 
 
 if __name__ == "__main__":
-    # pathing.py is inside src/app
-    # sample_data.JSON is inside src
+    # pathing.py and sample_data.JSON are both inside src/app
     json_file_path = Path(__file__).resolve().parent / "sample_data.JSON"
 
-    layer = Layer(json_file_path)
+    layers = OrderedLayer(json_file_path)
 
-    path = create_logical_path(layer)
-
-    print_path(path)
+    print_order(layers)
