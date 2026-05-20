@@ -38,3 +38,6 @@ class Layer:
             can_obj = Can(predictions[i])
             self.cans.append(can_obj)
             i += 1
+
+        #store size of the layer (number of cans)
+        self.size = len(self.cans)
