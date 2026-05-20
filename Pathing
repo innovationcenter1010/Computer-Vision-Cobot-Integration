@@ -1,1 +1,65 @@
-Createa
+from typing import List, Tuple
+
+Point = Tuple[float, float]
+
+
+
+    for point in sorted_points:
+        placed = False
+
+        for row in rows:
+            avg_y = sum(p[1] for p in row) / len(row)
+
+            if abs(point[1] - avg_y) <= row_tolerance:
+                row.append(point)
+                placed = True
+                break
+
+        if not placed:
+            rows.append([point])
+
+    return rows
+
+
+def serpentine_path(points: List[Point], row_tolerance: float = 2.0):
+    """
+    Create a logical snake-like path through a grid.
+    """
+
+    rows = organize_into_rows(points, row_tolerance)
+
+    # Sort rows top-to-bottom
+    rows.sort(key=lambda row: sum(p[1] for p in row) / len(row))
+
+    path = []
+
+    for i, row in enumerate(rows):
+
+        # Sort row left-to-right
+        row_sorted = sorted(row, key=lambda p: p[0])
+
+        # Reverse every other row
+        if i % 2 == 1:
+            row_sorted.reverse()
+
+        path.extend(row_sorted)
+
+    return path
+
+
+# Example
+if __name__ == "__main__":
+
+    coordinates = [
+        (1, 1), (2, 1), (4, 1),
+        (1, 3), (3, 3), (5, 3),
+        (0, 5), (2, 5), (4, 5), (6, 5),
+        (1, 8), (3, 8)
+    ]
+
+    path = serpentine_path(coordinates, row_tolerance=1.5)
+
+    print("Logical Grid Path:\n")
+
+    for i, p in enumerate(path):
+        print(f"{i+1:2d}: {p}")
