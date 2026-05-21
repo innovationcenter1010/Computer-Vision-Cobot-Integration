@@ -1,9 +1,9 @@
-import layers as layers
-from pathing import order_layer
+from layers import Layer
 
-new_layer = layers.Layer("sample_workflow/sample_data.JSON")
+# Sample main.py to test the Layer class and its pathing method.
+new_layer = Layer("sample_workflow/sample_data.JSON")
 
-new_layer = order_layer(new_layer)
+new_layer.path()
 
 print("Image dimensions: " + str(new_layer.image_width) + "x" + str(new_layer.image_height))
 print("Number of cans: " + str(new_layer.size))
