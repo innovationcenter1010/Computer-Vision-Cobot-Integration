@@ -1,6 +1,5 @@
 from pathlib import Path
-from layers import Layer
-
+from layers import Layer, Can
 
 def order_cans(cans):
     """

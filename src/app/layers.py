@@ -42,3 +42,28 @@ class Layer:
         self.size = len(self.cans)
 
 
+    def peek_front(self):
+        """
+        Returns the first Can in the list without removing it.
+        """
+        if not self.cans:
+            return None
+        return self.cans[0]
+
+    def pop_front(self):
+        """
+        Removes and returns the first Can in the list.
+        """
+        if not self.cans:
+            return None
+        can = self.cans.pop(0)
+        self.size = len(self.cans)
+        return can
+    
+
+    def path(self):
+        import pathing
+        
+        self = pathing.order_layer(self)
+
+
