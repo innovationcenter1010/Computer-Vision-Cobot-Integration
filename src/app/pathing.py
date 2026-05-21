@@ -108,12 +108,3 @@ def print_order(layer):
             f"center=({can.center_x}, {can.center_y}), "
             f"confidence={can.confidence}"
         )
-
-
-if __name__ == "__main__":
-    # pathing.py and sample_data.JSON are both inside src/app
-    json_file_path = Path(__file__).resolve().parent / "sample_data.JSON"
-
-    layers = OrderedLayer(json_file_path)
-
-    print_order(layers)

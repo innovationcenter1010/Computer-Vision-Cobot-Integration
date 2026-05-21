@@ -40,3 +40,5 @@ class Layer:
 
         #store size of the layer (number of cans)
         self.size = len(self.cans)
+
+
