@@ -1,5 +1,6 @@
 from layers import Layer
 
+# Sample main.py to test the Layer class and its pathing method.
 new_layer = Layer("sample_workflow/sample_data.JSON")
 
 new_layer.path()
