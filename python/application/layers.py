@@ -62,7 +62,7 @@ class Layer:
     
 
     def path(self):
-        import pathing
+        import python.app.pathing as pathing
         
         self = pathing.order_layer(self)
 
