@@ -10,6 +10,8 @@ PYBIND11_MODULE(motoman_cpp, m)
     // ---------------- Position ----------------
     py::class_<Position>(m, "Position")
         .def(py::init<>())
+        .def(py::init<double, double, double,
+                  double, double, double>())
         .def_readwrite("x", &Position::x)
         .def_readwrite("y", &Position::y)
         .def_readwrite("z", &Position::z)
