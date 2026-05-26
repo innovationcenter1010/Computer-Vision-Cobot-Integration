@@ -12,7 +12,7 @@ add_library(robot_core STATIC
     src/MotomanRobot.cpp
 )
 
-add_subdirectory(third_party/pybind11)
+add_subdirectory(third_party/pybind)
 
 target_include_directories(robot_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
