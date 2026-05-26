@@ -1,3 +1,9 @@
 [submodule "cpp/third_party/pybind11"]
 	path = cpp/third_party/pybind11
 	url = https://github.com/pybind/pybind11
+[submodule "pybind"]
+	path = pybind
+	url = https://github.com/pybind/pybind11.git
+[submodule "cpp/third_party/pybind"]
+	path = cpp/third_party/pybind
+	url = https://github.com/pybind/pybind11.git
