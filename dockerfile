@@ -26,6 +26,8 @@ WORKDIR /app
 
 COPY . /app
 
+COPY cpp/third_party/pybind /app/cpp/third_party/pybind
+
 # =========================================================
 # Build project
 # =========================================================
