@@ -1,13 +1,63 @@
-FROM python:3.11-slim
+FROM ubuntu:24.04
 
-WORKDIR /src
+ENV DEBIAN_FRONTEND=noninteractive
 
-COPY requirements.txt .
+# =========================================================
+# System dependencies
+# =========================================================
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    python3 \
+    python3-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
+# =========================================================
+# Working directory
+# =========================================================
 
-COPY . .
+WORKDIR /app
 
+# =========================================================
+# Copy project
+# =========================================================
 
-CMD ["python", "src/app/main.py"]
+COPY . /app
+
+# =========================================================
+# Build project
+# =========================================================
+
+RUN mkdir -p build && cd build && \
+    cmake .. && \
+    make -j$(nproc)
+
+# =========================================================
+# Python dependencies
+# =========================================================
+
+RUN pip3 install --break-system-packages --no-cache-dir \
+    -r python/requirements.txt
+
+# =========================================================
+# Runtime environment
+# =========================================================
+
+ENV LD_LIBRARY_PATH=/app/third_party/YMConnect:$LD_LIBRARY_PATH
+
+ENV PYTHONPATH=/app/build/python:$PYTHONPATH
+
+# =========================================================
+# Debugging
+# =========================================================
+
+RUN echo "=== BUILT MODULES ===" && \
+    find /app/build -name "*.so"
+
+# =========================================================
+# Start app
+# =========================================================
+
+CMD ["python3", "python/tests/streaming_test.py"]
