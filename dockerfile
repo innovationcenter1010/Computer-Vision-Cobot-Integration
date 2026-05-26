@@ -60,4 +60,4 @@ RUN echo "=== BUILT MODULES ===" && \
 # Start app
 # =========================================================
 
-CMD ["python3", "python/application/main.py"]
+CMD ["python3", "python/tests/streaming_test.py"]
