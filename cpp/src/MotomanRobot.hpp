@@ -36,6 +36,11 @@ public:
     Position read_position(uint16_t index);
     void write_position(uint16_t index, const Position& pos);
 
+    // Motion control
+    void motion_start();
+    void motion_stop(bool clearTrajectory = false);
+    void clear_trajectory();
+
     bool is_connected() const { return connected; }
 
 private:

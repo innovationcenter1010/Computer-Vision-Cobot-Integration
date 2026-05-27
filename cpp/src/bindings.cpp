@@ -34,5 +34,16 @@ PYBIND11_MODULE(motoman_cpp, m)
 
         // position API
         .def("read_position", &MotomanRobot::read_position)
-        .def("write_position", &MotomanRobot::write_position);
+        .def("write_position", &MotomanRobot::write_position)
+
+        // motion API
+        .def("motion_start", &MotomanRobot::motion_start)
+
+        .def("motion_stop",
+             &MotomanRobot::motion_stop,
+             py::arg("clear_trajectory") = false)
+
+        .def("clear_trajectory",
+             &MotomanRobot::clear_trajectory);
+             
 }

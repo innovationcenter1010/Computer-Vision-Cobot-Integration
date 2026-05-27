@@ -107,3 +107,42 @@ void MotomanRobot::write_position(uint16_t index, const Position& pos)
     if (!st.IsOk())
         throw std::runtime_error(st.Message);
 }
+
+// -------------------- MOTION --------------------
+
+void MotomanRobot::motion_start()
+{
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    StatusInfo st = controller->MotionManager->MotionStart();
+
+    if (!st.IsOk())
+        throw std::runtime_error("MotionStart failed: " + st.Message);
+}
+
+void MotomanRobot::motion_stop(bool clearTrajectory)
+{
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    StatusInfo st =
+        controller->MotionManager->MotionStop(clearTrajectory);
+
+    if (!st.IsOk())
+        throw std::runtime_error("MotionStop failed: " + st.Message);
+}
+
+void MotomanRobot::clear_trajectory()
+{
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    StatusInfo st =
+        controller->MotionManager->ClearAllTrajectory();
+
+    if (!st.IsOk())
+        throw std::runtime_error("ClearAllTrajectory failed: " + st.Message);
+}
+
+
