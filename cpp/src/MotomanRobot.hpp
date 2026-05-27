@@ -42,7 +42,7 @@ public:
     void clear_trajectory();
 
     //trajectory controll
-    void MotomanRobot::add_point_to_trajectory(const Position& pos);
+    void add_point_to_trajectory(const Position& pos);
 
     bool is_connected() const { return connected; }
 
