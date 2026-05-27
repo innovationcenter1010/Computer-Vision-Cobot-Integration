@@ -1,0 +1,67 @@
+[
+  {
+    "predictions": {
+      "image": {
+        "width": 640,
+        "height": 480
+      },
+      "predictions": [
+        {
+          "width": 35,
+          "height": 35,
+          "x": 130,
+          "y": 100,
+          "confidence": 0.95,
+          "class_id": 0,
+          "class": "top can",
+          "detection_id": "fake-0",
+          "parent_id": "image"
+        },
+        {
+          "width": 35,
+          "height": 35,
+          "x": 200,
+          "y": 100,
+          "confidence": 0.95,
+          "class_id": 0,
+          "class": "top can",
+          "detection_id": "fake-1",
+          "parent_id": "image"
+        },
+        {
+          "width": 35,
+          "height": 35,
+          "x": 270,
+          "y": 100,
+          "confidence": 0.95,
+          "class_id": 0,
+          "class": "top can",
+          "detection_id": "fake-2",
+          "parent_id": "image"
+        },
+        {
+          "width": 35,
+          "height": 35,
+          "x": 340,
+          "y": 100,
+          "confidence": 0.95,
+          "class_id": 0,
+          "class": "top can",
+          "detection_id": "fake-3",
+          "parent_id": "image"
+        },
+        {
+          "width": 35,
+          "height": 35,
+          "x": 410,
+          "y": 100,
+          "confidence": 0.95,
+          "class_id": 0,
+          "class": "top can",
+          "detection_id": "fake-4",
+          "parent_id": "image"
+        }
+      ]
+    }
+  }
+]
