@@ -60,4 +60,5 @@ RUN echo "=== BUILT MODULES ===" && \
 # Start app
 # =========================================================
 
-CMD ["python3", "python/application/sample_main.py"]
+CMD ["python3", "python/application/sample_main_logic_test.py"]
+

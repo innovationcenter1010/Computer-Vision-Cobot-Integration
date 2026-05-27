@@ -28,3 +28,6 @@ LAYER_Z4 = LAYER_Z3-CAN_HEIGHT
 LAYER_Z5 = LAYER_Z4-CAN_HEIGHT
 LAYER_Z6 = LAYER_Z5-CAN_HEIGHT
 LAYER_Z7 = LAYER_Z6-CAN_HEIGHT
+
+# Percentage threshold for determining if can objects are on a new layer or not
+LAYER_THRESHOLD = 0.7
