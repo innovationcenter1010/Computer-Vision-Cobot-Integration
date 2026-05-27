@@ -36,6 +36,11 @@ void MotomanRobot::disconnect()
     connected = false;
 }
 
+
+// -------------------- SETUP --------------------
+
+
+
 // -------------------- INTEGER --------------------
 
 int MotomanRobot::read_int(uint16_t index)
@@ -83,6 +88,9 @@ Position MotomanRobot::read_position(uint16_t index)
     p.x = data.positionData.axisData[0];
     p.y = data.positionData.axisData[1];
     p.z = data.positionData.axisData[2];
+    p.rx = data.positionData.axisData[3];
+    p.ry = data.positionData.axisData[4];   
+    p.rz = data.positionData.axisData[5];
 
     return p;
 }
@@ -143,6 +151,50 @@ void MotomanRobot::clear_trajectory()
 
     if (!st.IsOk())
         throw std::runtime_error("ClearAllTrajectory failed: " + st.Message);
+}
+
+// -------------------- TRAJECTORY --------------------
+
+void MotomanRobot::add_point_to_trajectory(const Position& pos)
+{
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    Motion motion;
+
+    // ---------------- Core configuration ----------------
+    motion.groupId = default_control_group; // R1 by default
+
+    motion.interpolationType = MoveInterpolationType::NoneSelected;
+
+    // ---------------- Coordinate type ----------------
+    motion.position.coordinateType = robot_coordinate_type;
+
+    // ---------------- Position mapping ----------------
+    motion.position.axisData[0] = pos.x;
+    motion.position.axisData[1] = pos.y;
+    motion.position.axisData[2] = pos.z;
+    motion.position.axisData[3] = pos.rx;
+    motion.position.axisData[4] = pos.ry;
+    motion.position.axisData[5] = pos.rz;
+
+    // ---------------- Motion defaults ----------------
+    motion.speed = 100.0; // or expose later as parameter
+    motion.speedType = SpeedType::VJ; // safe default for joint motion style
+
+    motion.attributes = robot_motion_attributes;
+
+    motion.accuracy = -1;
+
+    // ---------------- Execute ----------------
+    StatusInfo st =
+        controller->MotionManager->AddPointToTrajectory(motion);
+
+    if (!st.IsOk())
+    {
+        throw std::runtime_error(
+            "AddPointToTrajectory failed: " + st.Message);
+    }
 }
 
 

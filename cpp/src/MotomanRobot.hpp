@@ -41,10 +41,18 @@ public:
     void motion_stop(bool clearTrajectory = false);
     void clear_trajectory();
 
+    //trajectory controll
+    void MotomanRobot::add_point_to_trajectory(const Position& pos);
+
     bool is_connected() const { return connected; }
 
 private:
     std::string ip;
     MotomanController* controller = nullptr;
     bool connected = false;
+
+    CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables
+    ControlGroupId default_control_group = ControlGroupId::R1; // Default control group for motions
+    MotionAccelDecel robot_motion_attributes{ 50.0, 50.0 }; // Default to no acceleration/deceleration reduction
+    
 };

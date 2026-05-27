@@ -2,11 +2,16 @@
 #include <pybind11/stl.h>
 
 #include "MotomanRobot.hpp"
+#include "YMConnect.h"
 
 namespace py = pybind11;
 
 PYBIND11_MODULE(motoman_cpp, m)
 {
+
+
+
+
     // ---------------- Position ----------------
     py::class_<Position>(m, "Position")
         .def(py::init<>())
@@ -45,5 +50,5 @@ PYBIND11_MODULE(motoman_cpp, m)
 
         .def("clear_trajectory",
              &MotomanRobot::clear_trajectory);
-             
+
 }
