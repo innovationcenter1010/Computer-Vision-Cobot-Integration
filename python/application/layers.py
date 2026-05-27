@@ -15,6 +15,12 @@ class Can:
         self.center_y = self.corner_y + self.height // 2
 
 
+        self.real_x = None # Real-world x-coordinate (to be calculated later)
+        self.real_y = None # Real-world y-coordinate (to be calculated later)
+        self.real_z = None # Real-world z-coordinate (to be calculated later)
+        self.real_rz = None # Real-world rotation around z-axis (to be calculated later)
+
+
 class Layer:
     def __init__(self, json_file_path):
         with open(json_file_path, "r") as file:
