@@ -16,7 +16,7 @@ class Bin:
         self.layer = layers.Layer(layer_path)
 
         """ 
-        TODO:run the layer through the pathing algorithm to get the pick path for this layer.
+        TODO:run the layer through the pathing algorithm and homography to get the pick path for this layer.
         self.pickpath = pathing.order_layer(self.layer)
         """
 
