@@ -49,6 +49,20 @@ PYBIND11_MODULE(motoman_cpp, m)
              py::arg("clear_trajectory") = false)
 
         .def("clear_trajectory",
-             &MotomanRobot::clear_trajectory);
+             &MotomanRobot::clear_trajectory)
+
+        // trajectory control API
+        //.def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory);
+        .def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory, 
+            py::arg("pos"))
+
+        .def("set_motion_profile",
+            &MotomanRobot::set_motion_profile,
+            py::arg("speed") = 100.0,
+            py::arg("accel") = 100.0,
+            py::arg("decel") = 100.0);
+
+
+
 
 }

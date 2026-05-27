@@ -43,6 +43,7 @@ public:
 
     //trajectory controll
     void add_point_to_trajectory(const Position& pos);
+    void set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
 
     bool is_connected() const { return connected; }
 
@@ -54,5 +55,6 @@ private:
     CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables
     ControlGroupId default_control_group = ControlGroupId::R1; // Default control group for motions
     MotionAccelDecel robot_motion_attributes{ 50.0, 50.0 }; // Default to no acceleration/deceleration reduction
-    
+    DOUBLE64 robot_speed = 50.0; // Default speed for motions
+
 };

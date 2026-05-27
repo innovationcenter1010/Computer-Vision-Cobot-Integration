@@ -6,7 +6,7 @@ robot = motoman_cpp.MotomanRobot("192.168.1.31")
 
 
 print("Connecting...")
-robot.connect()
+#robot.connect()
 print("Connected")
 
 # ---------------- Define 4 positions ----------------
@@ -14,6 +14,8 @@ p1 = motoman_cpp.Position(300, 0, 400, 0, 0, 0)
 p2 = motoman_cpp.Position(400, 100, 450, 0, 0, 0)
 p3 = motoman_cpp.Position(500, -100, 450, 0, 0, 0)
 p4 = motoman_cpp.Position(600, 0, 400, 0, 0, 0)
+
+robot.set_motion_profile(speed=50.0, accel=50.0, decel=50.0)
 
 # ---------------- Build trajectory ----------------
 print("Clearing trajectory...")

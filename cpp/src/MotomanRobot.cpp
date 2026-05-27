@@ -39,6 +39,16 @@ void MotomanRobot::disconnect()
 
 // -------------------- SETUP --------------------
 
+void MotomanRobot::set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel)
+{
+    // This function can be used to set up motion profiles for the robot. For simplicity, we will use the same profile for all motions in this example.
+    // In a more complex implementation, you could allow different profiles for different motions or groups.
+
+    robot_motion_attributes.accelRatio = accel;
+    robot_motion_attributes.decelRatio = decel;
+    robot_speed = speed;
+}
+
 
 
 // -------------------- INTEGER --------------------
