@@ -5,6 +5,7 @@ class Cobot:
 
     def __init__(self, ip_address: str):
         self.robot = motoman_cpp.MotomanRobot(ip_address)
+        self.speed = 50 # Default speed for robot movements
 
     def pickup_can(self, can):
         """
@@ -12,7 +13,7 @@ class Cobot:
         can_position: a motoman_cpp.Position object representing the can's location.
         """
 
-        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 0, 0, 0)
+        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 0, 0, can.real_rz)
 
         # Move robot to the can's position
         self.robot.write_position(1, cobot_pickup_position)

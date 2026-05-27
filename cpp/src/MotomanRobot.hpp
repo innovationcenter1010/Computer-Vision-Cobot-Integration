@@ -36,10 +36,26 @@ public:
     Position read_position(uint16_t index);
     void write_position(uint16_t index, const Position& pos);
 
+    // Motion control
+    void motion_start();
+    void motion_stop(bool clearTrajectory = false);
+    void clear_trajectory();
+
+    //trajectory controll
+    void add_point_to_trajectory(const Position& pos);
+    void set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
+
     bool is_connected() const { return connected; }
 
 private:
     std::string ip;
     MotomanController* controller = nullptr;
-    bool connected = false;
+    bool connected = true;
+
+    MoveInterpolationType robot_interpolation_type = MoveInterpolationType::MoveJoint; // Default interpolation type for motions
+    CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables
+    ControlGroupId default_control_group = ControlGroupId::R1; // Default control group for motions
+    MotionAccelDecel robot_motion_attributes{ 50.0, 50.0 }; // Default to no acceleration/deceleration reduction
+    DOUBLE64 robot_speed = 50.0; // Default speed for motions
+
 };

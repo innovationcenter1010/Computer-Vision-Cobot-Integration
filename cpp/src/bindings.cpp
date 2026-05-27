@@ -2,11 +2,16 @@
 #include <pybind11/stl.h>
 
 #include "MotomanRobot.hpp"
+#include "YMConnect.h"
 
 namespace py = pybind11;
 
 PYBIND11_MODULE(motoman_cpp, m)
 {
+
+
+
+
     // ---------------- Position ----------------
     py::class_<Position>(m, "Position")
         .def(py::init<>())
@@ -34,5 +39,30 @@ PYBIND11_MODULE(motoman_cpp, m)
 
         // position API
         .def("read_position", &MotomanRobot::read_position)
-        .def("write_position", &MotomanRobot::write_position);
+        .def("write_position", &MotomanRobot::write_position)
+
+        // motion API
+        .def("motion_start", &MotomanRobot::motion_start)
+
+        .def("motion_stop",
+             &MotomanRobot::motion_stop,
+             py::arg("clear_trajectory") = false)
+
+        .def("clear_trajectory",
+             &MotomanRobot::clear_trajectory)
+
+        // trajectory control API
+        //.def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory);
+        .def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory, 
+            py::arg("pos"))
+
+        .def("set_motion_profile",
+            &MotomanRobot::set_motion_profile,
+            py::arg("speed") = 100.0,
+            py::arg("accel") = 100.0,
+            py::arg("decel") = 100.0);
+
+
+
+
 }
