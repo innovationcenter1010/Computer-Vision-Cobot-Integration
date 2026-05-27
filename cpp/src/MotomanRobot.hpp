@@ -47,6 +47,8 @@ public:
 
     bool is_connected() const { return connected; }
 
+    void set_io_bit(UINT32 index, bool value);
+
 private:
     std::string ip;
     MotomanController* controller = nullptr;

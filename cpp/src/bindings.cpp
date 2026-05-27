@@ -60,9 +60,9 @@ PYBIND11_MODULE(motoman_cpp, m)
             &MotomanRobot::set_motion_profile,
             py::arg("speed") = 100.0,
             py::arg("accel") = 100.0,
-            py::arg("decel") = 100.0);
-
-
-
+            py::arg("decel") = 100.0)
+            
+        .def("set_io_bit", &MotomanRobot::set_io_bit, 
+            py::arg("index"), py::arg("value"));
 
 }

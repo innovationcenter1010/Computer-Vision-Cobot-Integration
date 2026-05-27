@@ -16,6 +16,13 @@ positions = [p1, p2, p3, p4, p5]
 
 robot.set_motion_profile(speed=50.0, accel=50.0, decel=50.0)
 
+
+robot.set_io_bit(1, True)  # Example: Set digital output bit 0 to True (this would depend on your specific robot's IO configuration)
+
+time.sleep(1)  # Short delay to ensure the IO command is processed
+
+robot.set_io_bit(1, False)  # Example: Set digital output bit 0 to False
+
 # ---------------- Build trajectory ----------------
 print("Clearing trajectory...")
 robot.clear_trajectory()
