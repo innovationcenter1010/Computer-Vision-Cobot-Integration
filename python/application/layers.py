@@ -47,12 +47,24 @@ class Layer:
 
 
 class OrderedLayer(Layer):
+    """
+    Loads a JSON file, orders the cans in snake-pattern order,
+    and translates each can into real-world coordinates.
+
+    After creating an OrderedLayer, each can in layer.order will have:
+        can.real_x
+        can.real_y
+    """
+
     def __init__(self, json_file_path, image_corners, real_world_corners):
+        # Step 1: Load cans from JSON
         super().__init__(json_file_path)
 
+        # Step 2: Order cans in snake-pattern (local import avoids circular dependency)
         from pathing import order_layer
         order_layer(self)
 
+        # Step 3: Translate pixel coordinates to real-world coordinates
         from homography import HomographyTranslator
         translator = HomographyTranslator(image_corners, real_world_corners)
         translator.translate_layer(self)
