@@ -50,8 +50,9 @@ public:
 private:
     std::string ip;
     MotomanController* controller = nullptr;
-    bool connected = false;
+    bool connected = true;
 
+    MoveInterpolationType robot_interpolation_type = MoveInterpolationType::MoveJoint; // Default interpolation type for motions
     CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables
     ControlGroupId default_control_group = ControlGroupId::R1; // Default control group for motions
     MotionAccelDecel robot_motion_attributes{ 50.0, 50.0 }; // Default to no acceleration/deceleration reduction

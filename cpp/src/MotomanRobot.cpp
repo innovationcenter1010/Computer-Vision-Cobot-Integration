@@ -1,5 +1,6 @@
 #include "MotomanRobot.hpp"
 #include <stdexcept>
+#include "YMConnect.h"
 
 MotomanRobot::MotomanRobot(const std::string& ip)
     : ip(ip), controller(nullptr), connected(false)
@@ -154,13 +155,13 @@ void MotomanRobot::motion_stop(bool clearTrajectory)
 void MotomanRobot::clear_trajectory()
 {
     if (!connected)
-        throw std::runtime_error("Not connected");
+        //throw std::runtime_error("Not connected");
 
     StatusInfo st =
         controller->MotionManager->ClearAllTrajectory();
 
-    if (!st.IsOk())
-        throw std::runtime_error("ClearAllTrajectory failed: " + st.Message);
+    //if (!st.IsOk())
+      //  throw std::runtime_error("ClearAllTrajectory failed: " + st.Message);
 }
 
 // -------------------- TRAJECTORY --------------------
@@ -173,11 +174,10 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
     Motion motion;
 
     // ---------------- Core configuration ----------------
-    motion.groupId = default_control_group; // R1 by default
+    motion.groupId = ControlGroupId::R1; // R1 by default
 
-    motion.interpolationType = MoveInterpolationType::NoneSelected;
+    motion.interpolationType = robot_interpolation_type; // MoveJoint by default, can be changed to MoveLinear or MoveCircular as needed
 
-    // ---------------- Coordinate type ----------------
     motion.position.coordinateType = robot_coordinate_type;
 
     // ---------------- Position mapping ----------------
@@ -189,7 +189,7 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
     motion.position.axisData[5] = pos.rz;
 
     // ---------------- Motion defaults ----------------
-    motion.speed = 100.0; // or expose later as parameter
+    motion.speed = robot_speed; // or expose later as parameter
     motion.speedType = SpeedType::VJ; // safe default for joint motion style
 
     motion.attributes = robot_motion_attributes;
