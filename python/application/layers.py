@@ -13,6 +13,12 @@ class Can:
         self.center_x = self.corner_x + self.width // 2 # Calculate center x-coordinate
         self.center_y = self.corner_y + self.height // 2 # Calculate center y-coordinate
 
+        self.real_x = None # Real-world x-coordinate (to be calculated later)
+        self.real_y = None # Real-world y-coordinate (to be calculated later)
+        self.real_z = None # Real-world z-coordinate (to be calculated later)
+        self.real_rz = None # Real-world rotation around z-axis (to be calculated later)
+
+
 class Layer:
     def __init__(self, json_file_path):
         # Load JSON file
@@ -42,28 +48,5 @@ class Layer:
         self.size = len(self.cans)
 
 
-    def peek_front(self):
-        """
-        Returns the first Can in the list without removing it.
-        """
-        if not self.cans:
-            return None
-        return self.cans[0]
-
-    def pop_front(self):
-        """
-        Removes and returns the first Can in the list.
-        """
-        if not self.cans:
-            return None
-        can = self.cans.pop(0)
-        self.size = len(self.cans)
-        return can
-    
-
-    def path(self):
-        import python.app.pathing as pathing
-        
-        self = pathing.order_layer(self)
 
 
