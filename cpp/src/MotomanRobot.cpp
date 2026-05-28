@@ -125,7 +125,6 @@ int MotomanRobot::read_int(uint16_t index)
 }
 
 status_code MotomanRobot::write_int(uint16_t index, int value)
-status_code MotomanRobot::write_int(uint16_t index, int value)
 {
     if (!connected) throw std::runtime_error("Not connected");
 
