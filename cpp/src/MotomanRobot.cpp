@@ -60,13 +60,28 @@ void MotomanRobot::connection_watchdog_loop()
     }
 }
 
-void MotomanRobot::ping_robot()
+bool MotomanRobot::ping_robot()
 {
-    if (!controller) return false;
+    if (!controller)
+        return false;
 
-    StatusInfo st = controller->Status->GetRobotStatus();
+    SystemInfoData systemInfo;
 
-    return st.IsOk();
+    StatusInfo st = controller->Status->ReadSystemInformation(
+        SystemInfoId::R1,
+        systemInfo
+    );
+
+    if (!st.IsOk())
+        return false;
+
+    // Assuming your object has:
+    // std::string expectedSoftwareVersion;
+
+    // Example field name — adjust to actual API structure
+    std::string checked_software_version = systemInfo.softwareVersion;
+
+    return checked_software_version == software_version;
 }
 
 // -------------------- SETUP --------------------

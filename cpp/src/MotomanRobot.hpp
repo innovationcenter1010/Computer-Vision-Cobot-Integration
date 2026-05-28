@@ -59,6 +59,7 @@ public:
 private:
     std::string ip;
     MotomanController* controller = nullptr;
+    std::string software_version;
 
     std::thread connectionwatchdog_thread;
     std::atomic<bool> running{false};
