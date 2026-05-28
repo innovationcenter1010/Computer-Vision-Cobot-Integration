@@ -235,6 +235,23 @@ void MotomanRobot::set_general_output_bit(UINT16 group, UINT8 bitPosition, bool 
             "WriteBit failed: " + st.Message);
 }
 
+bool MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
+{
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    bool ioBit;
+
+    StatusInfo st = controller->Io->ReadBit(
+        IOType::GeneralOutput,
+        group,
+        bitPosition,
+        ioBit);
+
+    return ioBit;
+
+}
+
 
 
 
