@@ -104,8 +104,9 @@ status_code MotomanRobot::write_int(uint16_t index, int value)
 
     IntegerVariableData data(value, index);
 
-    return check_status(controller->Variables->IntegerVariable->Write(data));
+    status_code operation_status = check_status(controller->Variables->IntegerVariable->Write(data));
 
+    return operation_status;
 }
 
 // -------------------- POSITION --------------------
