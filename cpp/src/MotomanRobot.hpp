@@ -3,6 +3,7 @@
 #include <string>
 #include <cstdint>
 #include "YMConnect.h"
+#include "status.hpp"
 
 class Position
 {
@@ -27,6 +28,8 @@ public:
 
     void connect();
     void disconnect();
+    void connection_watchdog_loop();
+    bool ping_robot();
 
     // Integer variables
     int read_int(uint16_t index);
@@ -56,7 +59,10 @@ public:
 private:
     std::string ip;
     MotomanController* controller = nullptr;
-    bool connected = true;
+
+    std::thread connectionwatchdog_thread;
+    std::atomic<bool> running{false};
+    std::atomic<bool> connected{false};
 
     MoveInterpolationType robot_interpolation_type = MoveInterpolationType::MoveJoint; // Default interpolation type for motions
     CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables

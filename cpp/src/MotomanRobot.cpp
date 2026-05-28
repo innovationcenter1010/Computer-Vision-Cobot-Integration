@@ -1,6 +1,11 @@
 #include "MotomanRobot.hpp"
-#include <stdexcept>
 #include "YMConnect.h"
+
+#include <stdexcept>
+#include <thread>
+#include <chrono>
+
+using namespace std::chrono_literals;
 
 MotomanRobot::MotomanRobot(const std::string& ip)
     : ip(ip), controller(nullptr), connected(false)
@@ -24,6 +29,11 @@ void MotomanRobot::connect()
     }
 
     connected = true;
+    running = true; 
+
+    //thread for polling the connection to update the connected status
+    connectionwatchdog_thread = std::thread(&MotomanRobot::connection_watchdog_loop, this);
+
 }
 
 void MotomanRobot::disconnect()
@@ -35,8 +45,29 @@ void MotomanRobot::disconnect()
     }
 
     connected = false;
+    running = false; 
 }
 
+void MotomanRobot::connection_watchdog_loop()
+{
+    while (running)
+    {
+        bool ok = ping_robot();
+
+        connected = ok;
+
+        std::this_thread::sleep_for(500ms);
+    }
+}
+
+void MotomanRobot::ping_robot()
+{
+    if (!controller) return false;
+
+    StatusInfo st = controller->Status->GetRobotStatus();
+
+    return st.IsOk();
+}
 
 // -------------------- SETUP --------------------
 
@@ -67,16 +98,14 @@ int MotomanRobot::read_int(uint16_t index)
     return data.value;
 }
 
-void MotomanRobot::write_int(uint16_t index, int value)
+status_code MotomanRobot::write_int(uint16_t index, int value)
 {
     if (!connected) throw std::runtime_error("Not connected");
 
     IntegerVariableData data(value, index);
 
-    StatusInfo st = controller->Variables->IntegerVariable->Write(data);
+    return check_status(controller->Variables->IntegerVariable->Write(data));
 
-    if (!st.IsOk())
-        throw std::runtime_error(st.Message);
 }
 
 // -------------------- POSITION --------------------
