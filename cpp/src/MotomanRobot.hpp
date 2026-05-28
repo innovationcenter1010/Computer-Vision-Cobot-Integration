@@ -4,6 +4,7 @@
 #include <cstdint>
 #include "YMConnect.h"
 #include "status.hpp"
+#include "status.hpp"
 
 class Position
 {
@@ -28,6 +29,8 @@ public:
 
     void connect();
     void disconnect();
+    void connection_watchdog_loop();
+    bool ping_robot();
     void connection_watchdog_loop();
     bool ping_robot();
 

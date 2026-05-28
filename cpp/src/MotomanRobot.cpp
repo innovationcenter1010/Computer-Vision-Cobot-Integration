@@ -7,6 +7,12 @@
 
 using namespace std::chrono_literals;
 
+#include <stdexcept>
+#include <thread>
+#include <chrono>
+
+using namespace std::chrono_literals;
+
 MotomanRobot::MotomanRobot(const std::string& ip)
     : ip(ip), controller(nullptr), connected(false)
 {
@@ -29,6 +35,11 @@ void MotomanRobot::connect()
     }
 
     connected = true;
+    running = true; 
+
+    //thread for polling the connection to update the connected status
+    connectionwatchdog_thread = std::thread(&MotomanRobot::connection_watchdog_loop, this);
+
     running = true; 
 
     //thread for polling the connection to update the connected status
@@ -114,13 +125,16 @@ int MotomanRobot::read_int(uint16_t index)
 }
 
 status_code MotomanRobot::write_int(uint16_t index, int value)
+status_code MotomanRobot::write_int(uint16_t index, int value)
 {
     if (!connected) throw std::runtime_error("Not connected");
 
     IntegerVariableData data(value, index);
 
     status_code operation_status = check_status(controller->Variables->IntegerVariable->Write(data));
+    status_code operation_status = check_status(controller->Variables->IntegerVariable->Write(data));
 
+    return operation_status;
     return operation_status;
 }
 
