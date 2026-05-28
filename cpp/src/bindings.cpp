@@ -62,11 +62,11 @@ PYBIND11_MODULE(motoman_cpp, m)
             py::arg("accel") = 100.0,
             py::arg("decel") = 100.0)
             
-        .def("set_io_bit", &MotomanRobot::set_io_bit, 
+        .def("write_io_bit", &MotomanRobot::write_io_bit, 
             py::arg("index"), py::arg("value"))
 
-        .def("set_general_output_bit",
-            &MotomanRobot::set_general_output_bit,
+        .def("write_general_output_bit",
+            &MotomanRobot::write_general_output_bit,
             py::arg("group"),
             py::arg("bit_position"),
             py::arg("value"));

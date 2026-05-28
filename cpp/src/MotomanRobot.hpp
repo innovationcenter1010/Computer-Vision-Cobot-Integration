@@ -47,8 +47,8 @@ public:
 
     bool is_connected() const { return connected; }
 
-    void set_io_bit(UINT32 index, bool value);
-    void set_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
+    void write_io_bit(UINT32 index, bool value);
+    void write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
 
     bool read_general_output_bit(UINT16 group, UINT8 bitPosition);
 
