@@ -207,4 +207,51 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
     }
 }
 
+void MotomanRobot::write_io_bit(UINT32 index, bool value)
+{
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+
+    StatusInfo st = controller->Io->WriteBit(index,value);
+
+    if (!st.IsOk())
+        throw std::runtime_error("Write IoBit failed: " + st.Message);
+}
+
+void MotomanRobot::write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit)
+{
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    StatusInfo st = controller->Io->WriteBit(
+        IOType::GeneralOutput,
+        group,
+        bitPosition,
+        ioBit);
+
+    if (!st.IsOk())
+        throw std::runtime_error(
+            "WriteBit failed: " + st.Message);
+}
+
+bool MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
+{
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    bool ioBit;
+
+    StatusInfo st = controller->Io->ReadBit(
+        IOType::GeneralOutput,
+        group,
+        bitPosition,
+        ioBit);
+
+    return ioBit;
+
+}
+
+
+
 

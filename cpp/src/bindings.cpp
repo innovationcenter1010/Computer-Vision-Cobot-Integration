@@ -60,9 +60,20 @@ PYBIND11_MODULE(motoman_cpp, m)
             &MotomanRobot::set_motion_profile,
             py::arg("speed") = 100.0,
             py::arg("accel") = 100.0,
-            py::arg("decel") = 100.0);
+            py::arg("decel") = 100.0)
+            
+        .def("write_io_bit", &MotomanRobot::write_io_bit, 
+            py::arg("index"), py::arg("value"))
 
+        .def("write_general_output_bit",
+            &MotomanRobot::write_general_output_bit,
+            py::arg("group"),
+            py::arg("bit_position"),
+            py::arg("value"));
 
-
+        .def("read_general_output_bit",
+            &MotomanRobot::read_general_output_bit,
+            py::arg("group"),
+            py::arg("bit_position"));
 
 }
