@@ -124,17 +124,15 @@ int MotomanRobot::read_int(uint16_t index)
     return data.value;
 }
 
-status_code MotomanRobot::write_int(uint16_t index, int value)
+void MotomanRobot::write_int(uint16_t index, int value)
 {
     if (!connected) throw std::runtime_error("Not connected");
 
     IntegerVariableData data(value, index);
 
     status_code operation_status = check_status(controller->Variables->IntegerVariable->Write(data));
-    status_code operation_status = check_status(controller->Variables->IntegerVariable->Write(data));
 
-    return operation_status;
-    return operation_status;
+ 
 }
 
 // -------------------- POSITION --------------------
@@ -264,6 +262,9 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
             "AddPointToTrajectory failed: " + st.Message);
     }
 }
+
+
+//-------------------- IO --------------------
 
 void MotomanRobot::write_io_bit(UINT32 index, bool value)
 {
