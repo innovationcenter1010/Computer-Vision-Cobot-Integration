@@ -1,8 +1,21 @@
 .git
-__pycache__
+.gitmodules
+
+build
+cmake-build-debug
+cmake-build-release
+
+pycache
+*.pyc
+
 datasets
 outputs
 models
 
-cpp/third_party/pybind/tests
+.vscode
+
 cpp/third_party/pybind/docs
+cpp/third_party/pybind/tests
+cpp/third_party/pybind/.github
+
+*.svg

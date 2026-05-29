@@ -1,11 +1,12 @@
 import motoman_cpp
-from layers import Can
+from python.cobot.application.layers import Can
 
 class Cobot:
 
     def __init__(self, ip_address: str):
         self.robot = motoman_cpp.MotomanRobot(ip_address)
-        self.speed = 50 # Default speed for robot movements
+        self.robot.connect()
+        print("Connected to robot!!")
 
     def pickup_can(self, can):
         """

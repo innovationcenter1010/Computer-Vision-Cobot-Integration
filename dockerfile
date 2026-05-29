@@ -38,8 +38,7 @@ RUN mkdir -p build && cd build && \
 # Python dependencies
 # =========================================================
 
-RUN pip3 install --break-system-packages --no-cache-dir \
-    -r python/requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir -e ./python
 
 # =========================================================
 # Runtime environment
@@ -60,5 +59,4 @@ RUN echo "=== BUILT MODULES ===" && \
 # Start app
 # =========================================================
 
-CMD ["python3", "python/tests/trajectory_control_test.py"]
-
+CMD ["python3", "-m", "cobot.app.main"]
