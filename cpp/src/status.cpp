@@ -1,12 +1,12 @@
 #pragma once
 
-#include "MotomanRobot.hpp"
+//#include "MotomanRobot.hpp"
 #include <stdexcept>
 #include "YMConnect.h"
 #include "status.hpp"
 
 
-status_code check_status(const StatusInfo& st)
+inline status_code check_status(const StatusInfo& st)
 {
     if (!st.IsOk())
         return handle_error(st);

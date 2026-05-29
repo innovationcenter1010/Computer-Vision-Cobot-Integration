@@ -1,3 +1,5 @@
+#pragma once
+
 #include "YMConnect.h"
 #include <thread>
 #include <chrono>
