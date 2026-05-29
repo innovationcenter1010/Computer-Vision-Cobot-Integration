@@ -69,7 +69,7 @@ PYBIND11_MODULE(motoman_cpp, m)
             &MotomanRobot::write_general_output_bit,
             py::arg("group"),
             py::arg("bit_position"),
-            py::arg("value"));
+            py::arg("value"))
 
         .def("read_general_output_bit",
             &MotomanRobot::read_general_output_bit,
