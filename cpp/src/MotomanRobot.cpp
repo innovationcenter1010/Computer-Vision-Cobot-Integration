@@ -7,11 +7,6 @@
 
 using namespace std::chrono_literals;
 
-#include <stdexcept>
-#include <thread>
-#include <chrono>
-
-using namespace std::chrono_literals;
 
 MotomanRobot::MotomanRobot(const std::string& ip)
     : ip(ip), controller(nullptr), connected(false)
@@ -23,7 +18,7 @@ MotomanRobot::~MotomanRobot()
     disconnect();
 }
 
-void MotomanRobot::connect()
+StatusInfo MotomanRobot::connect()
 {
     StatusInfo status{};
 
@@ -47,7 +42,7 @@ void MotomanRobot::connect()
 
 }
 
-void MotomanRobot::disconnect()
+StatusInfo MotomanRobot::disconnect()
 {
     if (controller)
     {
@@ -86,9 +81,6 @@ bool MotomanRobot::ping_robot()
     if (!st.IsOk())
         return false;
 
-    // Assuming your object has:
-    // std::string expectedSoftwareVersion;
-
     // Example field name — adjust to actual API structure
     std::string checked_software_version = systemInfo.softwareVersion;
 
@@ -97,7 +89,7 @@ bool MotomanRobot::ping_robot()
 
 // -------------------- SETUP --------------------
 
-void MotomanRobot::set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel)
+StatusInfo MotomanRobot::set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel)
 {
     // This function can be used to set up motion profiles for the robot. For simplicity, we will use the same profile for all motions in this example.
     // In a more complex implementation, you could allow different profiles for different motions or groups.
@@ -105,6 +97,8 @@ void MotomanRobot::set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 d
     robot_motion_attributes.accelRatio = accel;
     robot_motion_attributes.decelRatio = decel;
     robot_speed = speed;
+
+    return StatusInfo{ 0, "Motion profile set successfully" };
 }
 
 
@@ -124,13 +118,13 @@ int MotomanRobot::read_int(uint16_t index)
     return data.value;
 }
 
-void MotomanRobot::write_int(uint16_t index, int value)
+StatusInfo MotomanRobot::write_int(uint16_t index, int value)
 {
     if (!connected) throw std::runtime_error("Not connected");
 
     IntegerVariableData data(value, index);
 
-    status_code operation_status = check_status(controller->Variables->IntegerVariable->Write(data));
+    return controller->Variables->IntegerVariable->Write(data);
 
  
 }
@@ -162,7 +156,7 @@ Position MotomanRobot::read_position(uint16_t index)
     return p;
 }
 
-void MotomanRobot::write_position(uint16_t index, const Position& pos)
+StatusInfo MotomanRobot::write_position(uint16_t index, const Position& pos)
 {
     if (!connected) throw std::runtime_error("Not connected");
 
@@ -176,53 +170,42 @@ void MotomanRobot::write_position(uint16_t index, const Position& pos)
     data.positionData.axisData[4] = pos.ry;
     data.positionData.axisData[5] = pos.rz;
 
-    StatusInfo st =
-        controller->Variables->RobotPositionVariable->Write(data);
+    return controller->Variables->RobotPositionVariable->Write(data);
 
-    if (!st.IsOk())
-        throw std::runtime_error(st.Message);
+
 }
 
 // -------------------- MOTION --------------------
 
-void MotomanRobot::motion_start()
+StatusInfo MotomanRobot::motion_start()
 {
     if (!connected)
         throw std::runtime_error("Not connected");
 
-    StatusInfo st = controller->MotionManager->MotionStart();
-
-    if (!st.IsOk())
-        throw std::runtime_error("MotionStart failed: " + st.Message);
+    return controller->MotionManager->MotionStart();
 }
 
-void MotomanRobot::motion_stop(bool clearTrajectory)
+StatusInfo MotomanRobot::motion_stop(bool clearTrajectory)
 {
     if (!connected)
         throw std::runtime_error("Not connected");
 
-    StatusInfo st =
-        controller->MotionManager->MotionStop(clearTrajectory);
+    return controller->MotionManager->MotionStop(clearTrajectory);
 
-    if (!st.IsOk())
-        throw std::runtime_error("MotionStop failed: " + st.Message);
 }
 
-void MotomanRobot::clear_trajectory()
+StatusInfo MotomanRobot::clear_trajectory()
 {
     if (!connected)
         //throw std::runtime_error("Not connected");
 
-    StatusInfo st =
-        controller->MotionManager->ClearAllTrajectory();
+    return controller->MotionManager->ClearAllTrajectory();
 
-    //if (!st.IsOk())
-      //  throw std::runtime_error("ClearAllTrajectory failed: " + st.Message);
 }
 
 // -------------------- TRAJECTORY --------------------
 
-void MotomanRobot::add_point_to_trajectory(const Position& pos)
+StatusInfo MotomanRobot::add_point_to_trajectory(const Position& pos)
 {
     if (!connected)
         throw std::runtime_error("Not connected");
@@ -253,45 +236,33 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
     motion.accuracy = -1;
 
     // ---------------- Execute ----------------
-    StatusInfo st =
-        controller->MotionManager->AddPointToTrajectory(motion);
+    return controller->MotionManager->AddPointToTrajectory(motion);
 
-    if (!st.IsOk())
-    {
-        throw std::runtime_error(
-            "AddPointToTrajectory failed: " + st.Message);
-    }
 }
 
 
 //-------------------- IO --------------------
 
-void MotomanRobot::write_io_bit(UINT32 index, bool value)
+StatusInfo MotomanRobot::write_io_bit(UINT32 index, bool value)
 {
     if (!connected)
         throw std::runtime_error("Not connected");
 
 
-    StatusInfo st = controller->Io->WriteBit(index,value);
+    return controller->Io->WriteBit(index,value);
 
-    if (!st.IsOk())
-        throw std::runtime_error("Write IoBit failed: " + st.Message);
 }
 
-void MotomanRobot::write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit)
+StatusInfo MotomanRobot::write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit)
 {
     if (!connected)
         throw std::runtime_error("Not connected");
 
-    StatusInfo st = controller->Io->WriteBit(
+    return controller->Io->WriteBit(
         IOType::GeneralOutput,
         group,
         bitPosition,
         ioBit);
-
-    if (!st.IsOk())
-        throw std::runtime_error(
-            "WriteBit failed: " + st.Message);
 }
 
 bool MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
@@ -308,7 +279,6 @@ bool MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
         ioBit);
 
     return ioBit;
-
 }
 
 

@@ -9,7 +9,12 @@ namespace py = pybind11;
 PYBIND11_MODULE(motoman_cpp, m)
 {
 
-
+    // -----------------Status Info -----------------
+    py::class_<StatusInfo>(m, "StatusInfo")
+        .def(py::init<>())
+        .def_readwrite("status_code", &StatusInfo::StatusCode)
+        .def_readwrite("message", &StatusInfo::Message)
+        .def("is_ok", &StatusInfo::IsOk);
 
 
     // ---------------- Position ----------------

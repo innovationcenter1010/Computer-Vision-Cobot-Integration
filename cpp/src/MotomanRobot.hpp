@@ -29,33 +29,32 @@ public:
     explicit MotomanRobot(const std::string& ip);
     ~MotomanRobot();
 
-    void connect();
-    void disconnect();
+    StatusInfo connect();
+    StatusInfo disconnect();
     void connection_watchdog_loop();
     bool ping_robot();
 
     // Integer variables
     int read_int(uint16_t index);
-    void write_int(uint16_t index, int value);
+    StatusInfo write_int(uint16_t index, int value);
 
     // Position variables
     Position read_position(uint16_t index);
-    void write_position(uint16_t index, const Position& pos);
+    StatusInfo write_position(uint16_t index, const Position& pos);
 
     // Motion control
-    void motion_start();
-    void motion_stop(bool clearTrajectory = false);
-    void clear_trajectory();
+    StatusInfo motion_start();
+    StatusInfo motion_stop(bool clearTrajectory = false);
+    StatusInfo clear_trajectory();
 
     //trajectory controll
-    void add_point_to_trajectory(const Position& pos);
-    void set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
+    StatusInfo add_point_to_trajectory(const Position& pos);
+    StatusInfo set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
 
     bool is_connected() const { return connected; }
 
-    void write_io_bit(UINT32 index, bool value);
-    void write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
-
+    StatusInfo write_io_bit(UINT32 index, bool value);
+    StatusInfo write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
     bool read_general_output_bit(UINT16 group, UINT8 bitPosition);
 
 
