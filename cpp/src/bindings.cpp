@@ -1,10 +1,13 @@
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+//nclude <pybind11/stl.h>
 
 #include "MotomanRobot.hpp"
 #include "YMConnect.h"
 
 namespace py = pybind11;
+
+py::object future_to_asyncio(std::future<void> fut);
+
 
 PYBIND11_MODULE(motoman_cpp, m)
 {
@@ -61,6 +64,12 @@ PYBIND11_MODULE(motoman_cpp, m)
             py::arg("speed") = 100.0,
             py::arg("accel") = 100.0,
             py::arg("decel") = 100.0)
+
+ 
+        .def("goto_position",[](MotomanRobot &robot, Position pos)
+        {
+            return future_to_asyncio(robot.goto_position(pos));
+        })
             
         .def("write_io_bit", &MotomanRobot::write_io_bit, 
             py::arg("index"), py::arg("value"))
@@ -75,5 +84,31 @@ PYBIND11_MODULE(motoman_cpp, m)
             &MotomanRobot::read_general_output_bit,
             py::arg("group"),
             py::arg("bit_position"));
+
+
+}
+
+
+py::object future_to_asyncio(std::future<void> fut)
+{
+
+    py::module asyncio = py::module::import("asyncio");
+    py::object loop = asyncio.attr("get_running_loop")();
+    py::object py_future = loop.attr("create_future")();
+
+    std::thread([loop, py_future, fut = std::move(fut)]() mutable
+    {
+
+    fut.get();  // wait in C++ thread
+
+    py::gil_scoped_acquire gil;
+
+    loop.attr("call_soon_threadsafe")(
+    py_future.attr("set_result"),
+    py::none()
+    );
+    }).detach();
+
+    return py_future;
 
 }

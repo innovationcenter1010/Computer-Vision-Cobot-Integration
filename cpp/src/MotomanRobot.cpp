@@ -1,6 +1,16 @@
 #include "MotomanRobot.hpp"
 #include <stdexcept>
 #include "YMConnect.h"
+#include <thread>
+#include <chrono>
+#include <future>
+//#include <pybind11/pybind11.h>
+//#include <pybind11/stl.h>
+
+
+using namespace std::chrono_literals;
+
+const std::chrono::milliseconds MOTION_POLLING_INTERVAL = 50ms;
 
 MotomanRobot::MotomanRobot(const std::string& ip)
     : ip(ip), controller(nullptr), connected(false)
@@ -207,6 +217,46 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
     }
 }
 
+double MotomanRobot::get_motion_progress()
+{
+
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    StatusInfo st;
+
+    double progress = controller->MotionManager->GetMotionTargetProgress(default_control_group, st);
+
+    if (!st.IsOk())
+        throw std::runtime_error("GetMotionTargetProgress failed: " + st.Message);
+
+    return progress;
+
+
+}
+
+std::future<void> MotomanRobot::goto_position(const Position& pos)
+{
+    std::promise<void> promise;
+    std::future<void> future = promise.get_future();
+
+    std::thread([this, pos, promise = std::move(promise)]() mutable
+    {
+        add_point_to_trajectory(pos);
+        motion_start();
+
+        while (get_motion_progress() < 90.0)
+        {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(50));
+        }
+
+        promise.set_value();
+    }).detach();
+
+    return future;
+}
+
 void MotomanRobot::write_io_bit(UINT32 index, bool value)
 {
     if (!connected)
@@ -251,6 +301,7 @@ bool MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
     return ioBit;
 
 }
+
 
 
 
