@@ -57,6 +57,10 @@ public:
     //trajectory controll
     robot_result add_point_to_trajectory(const Position& pos);
     robot_result set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
+    void add_point_to_trajectory(const Position& pos);
+    void set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
+    double get_motion_progress();
+    bool HasReachedTarget();
 
     bool is_connected() const { return connected; }
 

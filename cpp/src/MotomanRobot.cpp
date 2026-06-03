@@ -1,5 +1,15 @@
 #include "MotomanRobot.hpp"
 #include "YMConnect.h"
+#include <thread>
+#include <chrono>
+#include <future>
+//#include <pybind11/pybind11.h>
+//#include <pybind11/stl.h>
+
+
+using namespace std::chrono_literals;
+
+const std::chrono::milliseconds MOTION_POLLING_INTERVAL = 50ms;
 
 #include <stdexcept>
 #include <thread>
@@ -258,6 +268,9 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     if (!connected)
         return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
+    std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
+              << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
+
     Motion motion;
 
     // ---------------- Core configuration ----------------
@@ -337,6 +350,7 @@ robot_result MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPositi
 
     return robot_result{ st, ioBit };
 }
+
 
 
 

@@ -1,13 +1,29 @@
 import time
 import motoman_cpp
+import asyncio
+
+print("file opened",flush=True)
 
 robot = motoman_cpp.MotomanRobot("192.168.1.31")
 
+
+print("connecting to robot...",flush=True)
+
 robot.connect()
+
+while True:
+    connected = robot.connect()
+    if connected:
+        break
+
+    print("Failed to connect to robot. Retrying in 5 seconds...",flush=True)
+    time.sleep(5)
+
+print("Connected!")
 
 # ---------------- Define 4 positions ----------------
 p1 = motoman_cpp.Position(0, -925, 600, 180, 0, -90)
-p2 = motoman_cpp.Position(0, -925, 255, 180, 0, -90)
+p2 = motoman_cpp.Position(0, -925, 500, 180, 0, -90)
 p3 = motoman_cpp.Position(0, -925, 750, 180, 0, -90)
 p4 = motoman_cpp.Position(900, 0, 750, 180, 0, 0)
 p5 = motoman_cpp.Position(0, -925, 600, 180, 0, -90)
@@ -36,17 +52,17 @@ print("Adding trajectory points...")
 print("Starting motion...")
 robot.motion_start()
 
-robot.add_point_to_trajectory(positions[0]) #above can
-robot.add_point_to_trajectory(positions[1]) #go to can
-time.sleep(5)
-robot.set_general_output_bit(1,2, True)
-time.sleep
-robot.add_point_to_trajectory(positions[2]) #lift can
-robot.add_point_to_trajectory(positions[3]) #drop position
-time.sleep(15)
-robot.set_general_output_bit(1,2, False)
-time.sleep(1)
-robot.add_point_to_trajectory(positions[4]) #return to og position
+async def execute_trajectory():
+
+    await robot.goto_position(positions[0])
+    await robot.goto_position(positions[1])
+    await robot.goto_position(positions[2])
+    await robot.goto_position(positions[3])
+    await robot.goto_position(positions[4])
+
+asyncio.run(execute_trajectory())
+
+  # Move to the first position and wait for completion
 
 
 
