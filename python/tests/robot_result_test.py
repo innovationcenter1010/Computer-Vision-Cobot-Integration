@@ -46,9 +46,15 @@ print("Starting motion...")
 print_result("MOTION START", robot.motion_start())
 
 # ---------------- Add + execute moves ----------------
+print("Adding trajectory points...")
+
 for i, pos in enumerate(positions):
-    print_result(f"GOTO POSITION {i}", robot.goto_position(pos))
-    time.sleep(0.2)  # small delay so logs are readable
+    print_result(
+        f"ADD POINT {i}",
+        robot.add_point_to_trajectory(pos)
+    )
+
+    time.sleep(10)  # small delay so logs are readable
 
 # ---------------- Safety stop ----------------
 time.sleep(2)
