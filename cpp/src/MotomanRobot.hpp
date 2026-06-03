@@ -25,7 +25,7 @@ public:
     explicit MotomanRobot(const std::string& ip);
     ~MotomanRobot();
 
-    void connect();
+    bool connect();
     void disconnect();
 
     // Integer variables
@@ -56,7 +56,7 @@ public:
 private:
     std::string ip;
     MotomanController* controller = nullptr;
-    bool connected = true;
+    bool connected = false;
 
     MoveInterpolationType robot_interpolation_type = MoveInterpolationType::MoveJoint; // Default interpolation type for motions
     CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables

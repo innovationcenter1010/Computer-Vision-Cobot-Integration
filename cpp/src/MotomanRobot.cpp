@@ -12,18 +12,23 @@ MotomanRobot::~MotomanRobot()
     disconnect();
 }
 
-void MotomanRobot::connect()
+bool MotomanRobot::connect()
 {
     StatusInfo status{};
 
     controller = YMConnect::OpenConnection(ip, status);
 
-    if (!controller || !status.IsOk())
+    if (status.IsOk())
     {
-        throw std::runtime_error("Connect failed: " + status.Message);
+        connected = true;
     }
 
-    connected = true;
+    //throw std::runtime_error("Connection failed: " + status.Message);
+
+    std::cout << "Connection status: " << status.ToString() << std::endl;
+
+    return status.IsOk();
+
 }
 
 void MotomanRobot::disconnect()

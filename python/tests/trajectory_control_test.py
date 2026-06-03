@@ -1,9 +1,24 @@
 import time
 import motoman_cpp
 
+print("file opened",flush=True)
+
 robot = motoman_cpp.MotomanRobot("192.168.1.31")
 
+
+print("connecting to robot...",flush=True)
+
 robot.connect()
+
+while True:
+    connected = robot.connect()
+    if connected:
+        break
+
+    print("Failed to connect to robot. Retrying in 5 seconds...",flush=True)
+    time.sleep(5)
+
+print("Connected!")
 
 # ---------------- Define 4 positions ----------------
 p1 = motoman_cpp.Position(0, -925, 600, 180, 0, -90)
