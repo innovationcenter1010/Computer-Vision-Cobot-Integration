@@ -22,6 +22,8 @@ robot_result MotomanRobot::connect()
 {
     StatusInfo status{};
 
+    std::cout << "Connecting to robot at " << ip << "..." << std::endl;
+
     controller = YMConnect::OpenConnection(ip, status);
 
     connected = status.IsOk();
