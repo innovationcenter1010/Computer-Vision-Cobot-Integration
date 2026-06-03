@@ -1,5 +1,6 @@
 import motoman_cpp
 from layers import Can
+import asyncio
 
 class Cobot:
 
@@ -22,3 +23,8 @@ class Cobot:
         print(f"Picking up can at position: {cobot_pickup_position}")
 
         return True
+    
+    def goto(self,position):
+        self.robot.add_point_to_trajectory(position)
+        while not self.robot.has_reached_target():
+            asyncio.sleep(0.1)

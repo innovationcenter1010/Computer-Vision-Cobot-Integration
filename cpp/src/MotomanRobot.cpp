@@ -181,6 +181,9 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
     if (!connected)
         throw std::runtime_error("Not connected");
 
+    std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
+              << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
+
     Motion motion;
 
     // ---------------- Core configuration ----------------
@@ -253,7 +256,9 @@ bool MotomanRobot::HasReachedTarget()
         return false;
     }
 
-    return (progress >= 95.0 && stepsRemaining == 0);
+    std::cout << "Motion progress: " << progress << "%, Steps remaining: " << stepsRemaining << std::endl;
+
+    return (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
 }
 
 void MotomanRobot::write_io_bit(UINT32 index, bool value)

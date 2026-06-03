@@ -8,7 +8,7 @@ robot = motoman_cpp.MotomanRobot("192.168.1.31")
 robot.connect()
 
 # ---------------- Define 4 positions ----------------
-p1 = motoman_cpp.Position(0, -925, 600, 180, 0, -90)
+p1 = motoman_cpp.Position(0, -925, 800, 180, 0, -90)
 p2 = motoman_cpp.Position(0, -925, 500, 180, 0, -90)
 p3 = motoman_cpp.Position(0, -925, 750, 180, 0, -90)
 p4 = motoman_cpp.Position(900, 0, 750, 180, 0, 0)
@@ -29,10 +29,10 @@ robot.set_general_output_bit(1,2, False)  # Example: Set digital output bit 0 to
 """
 
 # ---------------- Build trajectory ----------------
-print("Clearing trajectory...")
+print("Clearing trajectory...",flush = True)
 robot.clear_trajectory()
 
-print("Adding trajectory points...")
+print("Adding trajectory points...",flush = True)
 
 
 print("Starting motion...")
@@ -41,6 +41,7 @@ robot.motion_start()
 
 async def goto(position):
     robot.add_point_to_trajectory(position)
+    robot.motion_start()  # Ensure motion is started after adding the point
     while not robot.has_reached_target():
         await asyncio.sleep(0.1)
 
