@@ -23,6 +23,10 @@ bool MotomanRobot::connect()
         connected = true;
     }
 
+    //throw std::runtime_error("Connection failed: " + status.Message);
+
+    std::cout << "Connection status: " << status.ToString() << std::endl;
+
     return status.IsOk();
 
 }
