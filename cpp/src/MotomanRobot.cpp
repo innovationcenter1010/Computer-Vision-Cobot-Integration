@@ -235,28 +235,6 @@ double MotomanRobot::get_motion_progress()
 
 }
 
-std::future<void> MotomanRobot::goto_position(const Position& pos)
-{
-    std::promise<void> promise;
-    std::future<void> future = promise.get_future();
-
-    std::thread([this, pos, promise = std::move(promise)]() mutable
-    {
-        add_point_to_trajectory(pos);
-        motion_start();
-
-        while (get_motion_progress() < 90.0)
-        {
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(50));
-        }
-
-        promise.set_value();
-    }).detach();
-
-    return future;
-}
-
 bool MotomanRobot::HasReachedTarget()
 {
     StatusInfo status;

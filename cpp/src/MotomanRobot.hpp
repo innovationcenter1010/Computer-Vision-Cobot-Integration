@@ -47,7 +47,6 @@ public:
     void set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
     double get_motion_progress();
     bool HasReachedTarget();
-    std::future<void> goto_position(const Position& pos);
 
     bool is_connected() const { return connected; }
 
