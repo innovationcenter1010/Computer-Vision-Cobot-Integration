@@ -56,8 +56,9 @@ PYBIND11_MODULE(motoman_cpp, m)
 
         // trajectory control API
         //.def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory);
-        .def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory, 
-            py::arg("pos"))
+        .def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory)
+
+        .def("has_reached_target", &MotomanRobot::HasReachedTarget)
 
         .def("set_motion_profile",
             &MotomanRobot::set_motion_profile,

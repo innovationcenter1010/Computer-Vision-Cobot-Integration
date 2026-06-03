@@ -257,6 +257,27 @@ std::future<void> MotomanRobot::goto_position(const Position& pos)
     return future;
 }
 
+bool MotomanRobot::HasReachedTarget()
+{
+    StatusInfo status;
+
+    DOUBLE64 progress = controller->MotionManager->GetMotionTargetProgress(ControlGroupId::R1, status);
+    if (!status.IsOk())
+    {
+        return false;
+    }
+
+    INT32 stepsRemaining = 0;
+    StatusInfo stepStatus = controller->MotionManager->GetRemainingStepsInTrajectory(stepsRemaining);
+
+    if (!stepStatus.IsOk())
+    {
+        return false;
+    }
+
+    return (progress >= 95.0 && stepsRemaining == 0);
+}
+
 void MotomanRobot::write_io_bit(UINT32 index, bool value)
 {
     if (!connected)
