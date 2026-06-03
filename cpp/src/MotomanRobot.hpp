@@ -4,9 +4,16 @@
 #include <cstdint>
 #include <thread>
 #include <atomic>
+#include <any>
 #include "YMConnect.h"
 #include "status.hpp"
 #include "status.hpp"
+
+struct robot_result
+{
+    StatusInfo status;
+    std::any payload;
+};
 
 class Position
 {
@@ -29,8 +36,8 @@ public:
     explicit MotomanRobot(const std::string& ip);
     ~MotomanRobot();
 
-    StatusInfo connect();
-    StatusInfo disconnect();
+    robot_result connect();
+    robot_result disconnect();
     void connection_watchdog_loop();
     bool ping_robot();
 

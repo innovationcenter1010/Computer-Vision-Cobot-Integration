@@ -9,12 +9,45 @@ namespace py = pybind11;
 PYBIND11_MODULE(motoman_cpp, m)
 {
 
-    // -----------------Status Info -----------------
+    // -----------------Status Info ----------------
+
     py::class_<StatusInfo>(m, "StatusInfo")
         .def(py::init<>())
         .def_readwrite("status_code", &StatusInfo::StatusCode)
         .def_readwrite("message", &StatusInfo::Message)
         .def("is_ok", &StatusInfo::IsOk);
+
+    py::class_<robot_result>(m, "robot_result")
+    .def(py::init<>())
+
+    .def_readwrite("status", &robot_result::status)
+
+    .def_property_readonly(
+        "payload",
+        [](const robot_result& r) -> py::object
+        {
+            if (!r.payload.has_value())
+                return py::none();
+
+            const auto& type = r.payload.type();
+
+            if (type == typeid(std::string))
+                return py::cast(std::any_cast<const std::string&>(r.payload));
+
+            if (type == typeid(int))
+                return py::cast(std::any_cast<int>(r.payload));
+
+            if (type == typeid(double))
+                return py::cast(std::any_cast<double>(r.payload));
+
+            if (type == typeid(bool))
+                return py::cast(std::any_cast<bool>(r.payload));
+
+            if (type == typeid(Position))
+                return py::cast(std::any_cast<const Position&>(r.payload));
+
+            return py::none();
+        });
 
 
     // ---------------- Position ----------------

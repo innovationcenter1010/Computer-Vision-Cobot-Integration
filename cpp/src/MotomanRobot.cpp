@@ -18,31 +18,28 @@ MotomanRobot::~MotomanRobot()
     disconnect();
 }
 
-StatusInfo MotomanRobot::connect()
+robot_result MotomanRobot::connect()
 {
     StatusInfo status{};
 
     controller = YMConnect::OpenConnection(ip, status);
 
-    if (!controller || !status.IsOk())
-    {
-        throw std::runtime_error("Connect failed: " + status.Message);
-    }
+    connected = status.IsOk();
+    running = status.IsOk();
+   
 
-    connected = true;
-    running = true; 
 
     //thread for polling the connection to update the connected status
     connectionwatchdog_thread = std::thread(&MotomanRobot::connection_watchdog_loop, this);
 
-    running = true; 
+    robot_result result{};
+    result.status = status;
+    result.payload = status.IsOk();
 
-    //thread for polling the connection to update the connected status
-    connectionwatchdog_thread = std::thread(&MotomanRobot::connection_watchdog_loop, this);
-
+    return result;
 }
 
-StatusInfo MotomanRobot::disconnect()
+robot_result MotomanRobot::disconnect()
 {
     if (controller)
     {
@@ -52,6 +49,12 @@ StatusInfo MotomanRobot::disconnect()
 
     connected = false;
     running = false; 
+
+    robot_result result{};
+    result.status = StatusInfo{ 0, "Disconnected successfully" };
+    result.payload = false;
+
+    return result;
 }
 
 void MotomanRobot::connection_watchdog_loop()
