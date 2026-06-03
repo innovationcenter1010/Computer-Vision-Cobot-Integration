@@ -6,8 +6,6 @@
 
 namespace py = pybind11;
 
-py::object future_to_asyncio(std::future<void> fut);
-
 
 PYBIND11_MODULE(motoman_cpp, m)
 {
