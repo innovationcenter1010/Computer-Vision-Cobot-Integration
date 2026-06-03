@@ -301,6 +301,29 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
 
 }
 
+bool MotomanRobot::HasReachedTarget()
+{
+    StatusInfo status;
+
+    DOUBLE64 progress = controller->MotionManager->GetMotionTargetProgress(ControlGroupId::R1, status);
+    if (!status.IsOk())
+    {
+        return false;
+    }
+
+    INT32 stepsRemaining = 0;
+    StatusInfo stepStatus = controller->MotionManager->GetRemainingStepsInTrajectory(stepsRemaining);
+
+    if (!stepStatus.IsOk())
+    {
+        return false;
+    }
+
+    std::cout << "Motion progress: " << progress << "%, Steps remaining: " << stepsRemaining << std::endl;
+
+    return (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
+}
+
 
 //-------------------- IO --------------------
 
