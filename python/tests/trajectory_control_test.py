@@ -3,7 +3,11 @@ import motoman_cpp
 
 robot = motoman_cpp.MotomanRobot("192.168.1.31")
 
-robot.connect()
+print("connecting to robot...")
+
+while not robot.connect():
+    print("Failed to connect to robot. Retrying in 5 seconds...")
+    time.sleep(5)
 
 # ---------------- Define 4 positions ----------------
 p1 = motoman_cpp.Position(0, -925, 600, 180, 0, -90)
