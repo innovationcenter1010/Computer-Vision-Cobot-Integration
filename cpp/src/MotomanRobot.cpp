@@ -1,6 +1,16 @@
 #include "MotomanRobot.hpp"
 #include <stdexcept>
 #include "YMConnect.h"
+#include <thread>
+#include <chrono>
+#include <future>
+//#include <pybind11/pybind11.h>
+//#include <pybind11/stl.h>
+
+
+using namespace std::chrono_literals;
+
+const std::chrono::milliseconds MOTION_POLLING_INTERVAL = 50ms;
 
 MotomanRobot::MotomanRobot(const std::string& ip)
     : ip(ip), controller(nullptr), connected(false)
@@ -176,6 +186,9 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
     if (!connected)
         throw std::runtime_error("Not connected");
 
+    std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
+              << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
+
     Motion motion;
 
     // ---------------- Core configuration ----------------
@@ -210,6 +223,47 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
         throw std::runtime_error(
             "AddPointToTrajectory failed: " + st.Message);
     }
+}
+
+double MotomanRobot::get_motion_progress()
+{
+
+    if (!connected)
+        throw std::runtime_error("Not connected");
+
+    StatusInfo st;
+
+    double progress = controller->MotionManager->GetMotionTargetProgress(default_control_group, st);
+
+    if (!st.IsOk())
+        throw std::runtime_error("GetMotionTargetProgress failed: " + st.Message);
+
+    return progress;
+
+
+}
+
+bool MotomanRobot::HasReachedTarget()
+{
+    StatusInfo status;
+
+    DOUBLE64 progress = controller->MotionManager->GetMotionTargetProgress(ControlGroupId::R1, status);
+    if (!status.IsOk())
+    {
+        return false;
+    }
+
+    INT32 stepsRemaining = 0;
+    StatusInfo stepStatus = controller->MotionManager->GetRemainingStepsInTrajectory(stepsRemaining);
+
+    if (!stepStatus.IsOk())
+    {
+        return false;
+    }
+
+    std::cout << "Motion progress: " << progress << "%, Steps remaining: " << stepsRemaining << std::endl;
+
+    return (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
 }
 
 void MotomanRobot::write_io_bit(UINT32 index, bool value)
@@ -256,6 +310,7 @@ bool MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
     return ioBit;
 
 }
+
 
 
 

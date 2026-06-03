@@ -1,10 +1,13 @@
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+//nclude <pybind11/stl.h>
 
 #include "MotomanRobot.hpp"
 #include "YMConnect.h"
 
 namespace py = pybind11;
+
+py::object future_to_asyncio(std::future<void> fut);
+
 
 PYBIND11_MODULE(motoman_cpp, m)
 {
@@ -51,8 +54,9 @@ PYBIND11_MODULE(motoman_cpp, m)
 
         // trajectory control API
         //.def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory);
-        .def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory, 
-            py::arg("pos"))
+        .def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory)
+
+        .def("has_reached_target", &MotomanRobot::HasReachedTarget)
 
         .def("set_motion_profile",
             &MotomanRobot::set_motion_profile,
@@ -73,5 +77,6 @@ PYBIND11_MODULE(motoman_cpp, m)
             &MotomanRobot::read_general_output_bit,
             py::arg("group"),
             py::arg("bit_position"));
+
 
 }
