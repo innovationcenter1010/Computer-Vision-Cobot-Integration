@@ -1,15 +1,54 @@
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+//nclude <pybind11/stl.h>
 
 #include "MotomanRobot.hpp"
 #include "YMConnect.h"
 
 namespace py = pybind11;
 
+
 PYBIND11_MODULE(motoman_cpp, m)
 {
 
+    // -----------------Status Info ----------------
 
+    py::class_<StatusInfo>(m, "StatusInfo")
+        .def(py::init<>())
+        .def_readwrite("status_code", &StatusInfo::StatusCode)
+        .def_readwrite("message", &StatusInfo::Message)
+        .def("is_ok", &StatusInfo::IsOk);
+
+    py::class_<robot_result>(m, "robot_result")
+    .def(py::init<>())
+
+    .def_readwrite("status", &robot_result::status)
+
+    .def_property_readonly(
+        "payload",
+        [](const robot_result& r) -> py::object
+        {
+            if (!r.payload.has_value())
+                return py::none();
+
+            const auto& type = r.payload.type();
+
+            if (type == typeid(std::string))
+                return py::cast(std::any_cast<const std::string&>(r.payload));
+
+            if (type == typeid(int))
+                return py::cast(std::any_cast<int>(r.payload));
+
+            if (type == typeid(double))
+                return py::cast(std::any_cast<double>(r.payload));
+
+            if (type == typeid(bool))
+                return py::cast(std::any_cast<bool>(r.payload));
+
+            if (type == typeid(Position))
+                return py::cast(std::any_cast<const Position&>(r.payload));
+
+            return py::none();
+        });
 
 
     // ---------------- Position ----------------
@@ -31,8 +70,6 @@ PYBIND11_MODULE(motoman_cpp, m)
         .def("connect", &MotomanRobot::connect)
         .def("disconnect", &MotomanRobot::disconnect)
 
-        .def("is_connected", &MotomanRobot::is_connected)
-
         // integer API
         .def("read_int", &MotomanRobot::read_int)
         .def("write_int", &MotomanRobot::write_int)
@@ -53,8 +90,9 @@ PYBIND11_MODULE(motoman_cpp, m)
 
         // trajectory control API
         //.def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory);
-        .def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory, 
-            py::arg("pos"))
+        .def("add_point_to_trajectory", &MotomanRobot::add_point_to_trajectory)
+
+        .def("has_reached_target", &MotomanRobot::HasReachedTarget)
 
         .def("set_motion_profile",
             &MotomanRobot::set_motion_profile,
@@ -75,5 +113,6 @@ PYBIND11_MODULE(motoman_cpp, m)
             &MotomanRobot::read_general_output_bit,
             py::arg("group"),
             py::arg("bit_position"));
+
 
 }

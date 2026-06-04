@@ -2,7 +2,18 @@
 
 #include <string>
 #include <cstdint>
+#include <thread>
+#include <atomic>
+#include <any>
 #include "YMConnect.h"
+#include "status.hpp"
+#include "status.hpp"
+
+struct robot_result
+{
+    StatusInfo status;
+    std::any payload;
+};
 
 class Position
 {
@@ -25,38 +36,45 @@ public:
     explicit MotomanRobot(const std::string& ip);
     ~MotomanRobot();
 
-    void connect();
-    void disconnect();
+    robot_result connect();
+    robot_result disconnect();
+    void connection_watchdog_loop();
+    robot_result ping_robot();
 
     // Integer variables
     int read_int(uint16_t index);
-    void write_int(uint16_t index, int value);
+    robot_result write_int(uint16_t index, int value);
 
     // Position variables
-    Position read_position(uint16_t index);
-    void write_position(uint16_t index, const Position& pos);
+    robot_result read_position(uint16_t index);
+    robot_result write_position(uint16_t index, const Position& pos);
 
     // Motion control
-    void motion_start();
-    void motion_stop(bool clearTrajectory = false);
-    void clear_trajectory();
+    robot_result motion_start();
+    robot_result motion_stop(bool clearTrajectory = false);
+    robot_result clear_trajectory();
 
     //trajectory controll
-    void add_point_to_trajectory(const Position& pos);
-    void set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
+    robot_result add_point_to_trajectory(const Position& pos);
+    robot_result set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
+    double get_motion_progress();
+    bool HasReachedTarget();
 
     bool is_connected() const { return connected; }
 
-    void write_io_bit(UINT32 index, bool value);
-    void write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
-
-    bool read_general_output_bit(UINT16 group, UINT8 bitPosition);
+    robot_result write_io_bit(UINT32 index, bool value);
+    robot_result write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
+    robot_result read_general_output_bit(UINT16 group, UINT8 bitPosition);
 
 
 private:
     std::string ip;
     MotomanController* controller = nullptr;
-    bool connected = true;
+    std::string software_version;
+
+    std::thread connectionwatchdog_thread;
+    std::atomic<bool> running{false};
+    std::atomic<bool> connected{false};
 
     MoveInterpolationType robot_interpolation_type = MoveInterpolationType::MoveJoint; // Default interpolation type for motions
     CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables
