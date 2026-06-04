@@ -1,6 +1,5 @@
 import json
 
-
 class Can:
     def __init__(self, can_data):
         self.can_class = can_data["class"]

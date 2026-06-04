@@ -1,5 +1,5 @@
-import motoman_cpp
-from layers import Can
+from cobot_application.cobot import motoman_cpp
+from cobot_application.cobot.layers import Can
 import asyncio
 
 GRIPPER_ON = True
@@ -7,7 +7,7 @@ GRIPPER_OFF = False
 
 class Cobot:
 
-    async def __init__(self, ip_address: str):
+    def __init__(self, ip_address: str):
         self.robot = motoman_cpp.MotomanRobot(ip_address)
         
         for attempt in range(5):

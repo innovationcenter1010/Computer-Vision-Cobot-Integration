@@ -2,12 +2,11 @@ import asyncio
 import json
 from pathlib import Path
 
-class Config:
-    def __init__(self, path: str = "config.json"):
-        self.path = Path(path)
 
-        if not self.path.exists():
-            self.data = False
+class Config:
+    def __init__(self):
+        base = Path(__file__).resolve().parent
+        self.path = base / "config.JSON"
 
         with self.path.open("r", encoding="utf-8") as f:
             self.data = json.load(f)

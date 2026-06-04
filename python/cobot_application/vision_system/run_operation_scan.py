@@ -1,7 +1,7 @@
 from pathlib import Path
 import time
 
-from cobot.app.vision_system.yolo_obb_detector import YoloOBBDetector
+from cobot_application.vision_system.yolo_obb_detector import YoloOBBDetector
 
 
 MODEL_PATH = Path("/app/vision_workspace/models/cans_obb_best.pt")

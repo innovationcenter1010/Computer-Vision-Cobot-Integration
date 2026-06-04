@@ -65,4 +65,4 @@ RUN echo "=== BUILT MODULES ===" && \
 # Start app
 # =========================================================
 
-CMD ["python3", "-m", "cobot.app.main"]
+CMD ["python3", "-m", "cobot_application.main"]
