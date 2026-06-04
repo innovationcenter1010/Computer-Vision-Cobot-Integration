@@ -7,7 +7,7 @@ GRIPPER_OFF = False
 
 class Cobot:
 
-    def __init__(self, ip_address: str):
+    async def __init__(self, ip_address: str):
         self.robot = motoman_cpp.MotomanRobot(ip_address)
         
         for attempt in range(5):
@@ -25,23 +25,26 @@ class Cobot:
         self.targets = []
 
 
-    def pick_and_place(self, can):
+    async def pick_and_place(self, can):
 
         cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 0, 0, can.real_rz)
 
-        self.goto(cobot_pickup_position)
+        await self.goto(cobot_pickup_position)
 
         self._set_gripper(GRIPPER_ON)
 
-        self.goto(self.targets[0])
+        await self.goto(self.targets[0])
 
         self._set_gripper(GRIPPER_OFF)
     
-    def goto(self,position):
+    async def goto(self,position):
         self.robot.add_point_to_trajectory(position)
         self.robot.motion_start()
         while not self.robot.has_reached_target():
-            asyncio.sleep(0.2)
+            await asyncio.sleep(0.2)
+
+    def disconnect(self):
+        self.robot.disconnect()
 
     def _set_gripper(self, state: bool):
         return self.robot.set_general_output_bit(self.gripper_io_group, self.gripper_io_bit, state)
