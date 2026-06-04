@@ -2,29 +2,46 @@ import motoman_cpp
 from layers import Can
 import asyncio
 
+GRIPPER_ON = True
+GRIPPER_OFF = False
+
 class Cobot:
 
     def __init__(self, ip_address: str):
         self.robot = motoman_cpp.MotomanRobot(ip_address)
-        self.speed = 50 # Default speed for robot movements
+        
+        for attempt in range(5):
+            result = self.robot.connect()
+            if result.status.is_ok():
+                print("Connected to robot!!")
+                break
+            else:
+                print(f"Connection attempt {attempt + 1} failed. Retrying...")
+                asyncio.sleep(2)
 
-    def pickup_can(self, can):
-        """
-        Moves the robot to the specified can position and picks it up.
-        can_position: a motoman_cpp.Position object representing the can's location.
-        """
+
+        self.gripper_io_group = 1
+        self.gripper_io_bit = 2
+        self.targets = []
+
+
+    def pick_and_place(self, can):
 
         cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 0, 0, can.real_rz)
 
-        # Move robot to the can's position
-        self.robot.write_position(1, cobot_pickup_position)
+        self.goto(cobot_pickup_position)
 
-        # Simulate picking up the can (this would involve more complex logic in a real implementation)
-        print(f"Picking up can at position: {cobot_pickup_position}")
+        self._set_gripper(GRIPPER_ON)
 
-        return True
+        self.goto(self.targets[0])
+
+        self._set_gripper(GRIPPER_OFF)
     
     def goto(self,position):
         self.robot.add_point_to_trajectory(position)
+        self.robot.motion_start()
         while not self.robot.has_reached_target():
-            asyncio.sleep(0.1)
+            asyncio.sleep(0.2)
+
+    def _set_gripper(self, state: bool):
+        return self.robot.set_general_output_bit(self.gripper_io_group, self.gripper_io_bit, state)
