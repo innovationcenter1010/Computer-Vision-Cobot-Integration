@@ -36,9 +36,10 @@ robot_result MotomanRobot::connect()
 
     controller = YMConnect::OpenConnection(ip, status);
 
+    StatusInfo arming_status = controller->ControlCommands->SetServos(SignalStatus::ON);
+
     connected = status.IsOk();
     running = status.IsOk();
-
 
     SystemInfoData systemInfo;
     StatusInfo st = controller->Status->ReadSystemInformation(
@@ -61,18 +62,31 @@ robot_result MotomanRobot::connect()
 
 robot_result MotomanRobot::disconnect()
 {
+    
+    StatusInfo disarm_status;
+
     if (controller)
     {
+        disarm_status = controller->ControlCommands->SetServos(SignalStatus::OFF);
         YMConnect::CloseConnection(controller);
         controller = nullptr;
+    }
+
+    else
+
+    {
+        robot_result result{};
+        result.status = StatusInfo{ 1, "Controller not initialized" };
+        result.payload = false;
+        return result;
     }
 
     connected = false;
     running = false; 
 
     robot_result result{};
-    result.status = StatusInfo{ 0, "Disconnected successfully" };
-    result.payload = false;
+    result.status = disarm_status;
+    result.payload = true;
 
     return result;
 }
