@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM python:3.11-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -9,9 +9,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
+    git \
     python3 \
     python3-dev \
     python3-pip \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # =========================================================
@@ -38,8 +44,7 @@ RUN mkdir -p build && cd build && \
 # Python dependencies
 # =========================================================
 
-RUN pip3 install --break-system-packages --no-cache-dir \
-    -r python/requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir -e ./python
 
 # =========================================================
 # Runtime environment
@@ -60,5 +65,4 @@ RUN echo "=== BUILT MODULES ===" && \
 # Start app
 # =========================================================
 
-CMD ["python3", "python/tests/motion_polling_test.py"]
-
+CMD ["python3", "-m", "cobot.app.main"]
