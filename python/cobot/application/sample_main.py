@@ -1,6 +1,6 @@
-import config
+import python.cobot.application.config as config
 from pathlib import Path
-from bin import Bin
+from python.cobot.application.bin import Bin
 
 JSON_FILE_NAME = "sample_data.JSON"
 

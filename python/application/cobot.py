@@ -48,3 +48,9 @@ class Cobot:
 
     def _set_gripper(self, state: bool):
         return self.robot.set_general_output_bit(self.gripper_io_group, self.gripper_io_bit, state)
+    
+
+
+
+
+

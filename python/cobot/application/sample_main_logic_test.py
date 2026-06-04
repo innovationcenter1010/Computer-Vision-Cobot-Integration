@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from bin import Bin
+from python.cobot.application.bin import Bin
 
 
 TEST_JSON_FOLDER_NAME = "Test_json"
