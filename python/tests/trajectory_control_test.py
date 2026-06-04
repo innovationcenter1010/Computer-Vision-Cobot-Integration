@@ -2,6 +2,7 @@ import time
 import os
 import traceback
 import motoman_cpp
+import asyncio
 
 # ---------------- Environment settings ----------------
 robot_ip = os.getenv("ROBOT_IP", "192.168.1.31")
@@ -87,8 +88,17 @@ try:
 
     time.sleep(1)
 
-    print("Adding point 5: return to original position", flush=True)
-    robot.add_point_to_trajectory(positions[4])
+async def execute_trajectory():
+
+    await robot.goto_position(positions[0])
+    await robot.goto_position(positions[1])
+    await robot.goto_position(positions[2])
+    await robot.goto_position(positions[3])
+    await robot.goto_position(positions[4])
+
+asyncio.run(execute_trajectory())
+
+  # Move to the first position and wait for completion
 
     print("Waiting for motion to complete...", flush=True)
     time.sleep(20)

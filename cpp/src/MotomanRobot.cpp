@@ -1,6 +1,22 @@
 #include "MotomanRobot.hpp"
-#include <stdexcept>
 #include "YMConnect.h"
+#include <thread>
+#include <chrono>
+#include <future>
+//#include <pybind11/pybind11.h>
+//#include <pybind11/stl.h>
+
+
+using namespace std::chrono_literals;
+
+const std::chrono::milliseconds MOTION_POLLING_INTERVAL = 50ms;
+
+#include <stdexcept>
+#include <thread>
+#include <chrono>
+
+using namespace std::chrono_literals;
+
 
 MotomanRobot::MotomanRobot(const std::string& ip)
     : ip(ip), controller(nullptr), connected(false)
@@ -12,40 +28,112 @@ MotomanRobot::~MotomanRobot()
     disconnect();
 }
 
-bool MotomanRobot::connect()
+robot_result MotomanRobot::connect()
 {
     StatusInfo status{};
 
+    std::cout << "Connecting to robot at " << ip << "..." << std::endl;
+
     controller = YMConnect::OpenConnection(ip, status);
 
-    if (status.IsOk())
-    {
-        connected = true;
-    }
+    StatusInfo arming_status = controller->ControlCommands->SetServos(SignalStatus::ON);
 
-    //throw std::runtime_error("Connection failed: " + status.Message);
+    connected = status.IsOk();
+    running = status.IsOk();
 
-    std::cout << "Connection status: " << status.ToString() << std::endl;
+    SystemInfoData systemInfo;
+    StatusInfo st = controller->Status->ReadSystemInformation(
+        SystemInfoId::R1,
+        systemInfo
+    );
 
-    return status.IsOk();
+    if(st.IsOk())
+        software_version = systemInfo.softwareVersion;
+   
+    //thread for polling the connection to update the connected status
+    connectionwatchdog_thread = std::thread(&MotomanRobot::connection_watchdog_loop, this);
 
+    robot_result result{};
+    result.status = status;
+    result.payload = status.IsOk();
+
+    return result;
 }
 
-void MotomanRobot::disconnect()
+robot_result MotomanRobot::disconnect()
 {
+    
+    StatusInfo disarm_status;
+
     if (controller)
     {
+        disarm_status = controller->ControlCommands->SetServos(SignalStatus::OFF);
         YMConnect::CloseConnection(controller);
         controller = nullptr;
     }
 
+    else
+
+    {
+        robot_result result{};
+        result.status = StatusInfo{ 1, "Controller not initialized" };
+        result.payload = false;
+        return result;
+    }
+
     connected = false;
+    running = false; 
+
+    robot_result result{};
+    result.status = disarm_status;
+    result.payload = true;
+
+    return result;
 }
 
+void MotomanRobot::connection_watchdog_loop()
+{
+    while (running)
+    {
+        bool ok = std::any_cast<bool>(ping_robot().payload);
+
+        connected = ok;
+
+        std::this_thread::sleep_for(500ms);
+    }
+}
+
+robot_result MotomanRobot::ping_robot()
+{
+    if (!controller)
+    {
+        robot_result result{};
+        result.status = StatusInfo{ 1, "Controller not initialized" };
+        result.payload = false;
+        return result;
+    }
+
+    SystemInfoData systemInfo;
+
+    StatusInfo st = controller->Status->ReadSystemInformation(
+        SystemInfoId::R1,
+        systemInfo
+    );
+
+    // Example field name — adjust to actual API structure
+    std::string checked_software_version = systemInfo.softwareVersion;
+
+
+    robot_result result{};
+    result.status = st;
+    result.payload = checked_software_version == software_version;
+
+    return result;
+}
 
 // -------------------- SETUP --------------------
 
-void MotomanRobot::set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel)
+robot_result MotomanRobot::set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel)
 {
     // This function can be used to set up motion profiles for the robot. For simplicity, we will use the same profile for all motions in this example.
     // In a more complex implementation, you could allow different profiles for different motions or groups.
@@ -53,6 +141,12 @@ void MotomanRobot::set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 d
     robot_motion_attributes.accelRatio = accel;
     robot_motion_attributes.decelRatio = decel;
     robot_speed = speed;
+
+    robot_result result{};
+    result.status = StatusInfo{ 0, "Motion profile set successfully" };
+    result.payload = true;
+
+    return result;
 }
 
 
@@ -72,23 +166,27 @@ int MotomanRobot::read_int(uint16_t index)
     return data.value;
 }
 
-void MotomanRobot::write_int(uint16_t index, int value)
+robot_result MotomanRobot::write_int(uint16_t index, int value)
 {
-    if (!connected) throw std::runtime_error("Not connected");
+    if (!connected) 
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
     IntegerVariableData data(value, index);
 
-    StatusInfo st = controller->Variables->IntegerVariable->Write(data);
+    robot_result result{};
+    result.status = controller->Variables->IntegerVariable->Write(data);
+    result.payload = result.status.IsOk();
 
-    if (!st.IsOk())
-        throw std::runtime_error(st.Message);
+    return result;
+
 }
 
 // -------------------- POSITION --------------------
 
-Position MotomanRobot::read_position(uint16_t index)
+robot_result MotomanRobot::read_position(uint16_t index)
 {
-    if (!connected) throw std::runtime_error("Not connected");
+    if (!connected)
+        return robot_result{ StatusInfo{ 1, "Not connected" }, Position{} };
 
     RobotPositionVariableData data{};
 
@@ -96,7 +194,7 @@ Position MotomanRobot::read_position(uint16_t index)
         controller->Variables->RobotPositionVariable->Read(index, data);
 
     if (!st.IsOk())
-        throw std::runtime_error(st.Message);
+        return robot_result{ st, Position{} };
 
     Position p;
 
@@ -108,12 +206,17 @@ Position MotomanRobot::read_position(uint16_t index)
     p.ry = data.positionData.axisData[4];   
     p.rz = data.positionData.axisData[5];
 
-    return p;
+    robot_result result{};
+    result.status = st;
+    result.payload = p;
+
+    return result;
 }
 
-void MotomanRobot::write_position(uint16_t index, const Position& pos)
+robot_result MotomanRobot::write_position(uint16_t index, const Position& pos)
 {
-    if (!connected) throw std::runtime_error("Not connected");
+    if (!connected) 
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
     RobotPositionVariableData data{};
     data.variableIndex = index;
@@ -125,56 +228,62 @@ void MotomanRobot::write_position(uint16_t index, const Position& pos)
     data.positionData.axisData[4] = pos.ry;
     data.positionData.axisData[5] = pos.rz;
 
-    StatusInfo st =
-        controller->Variables->RobotPositionVariable->Write(data);
+    robot_result result{};
+    result.status = controller->Variables->RobotPositionVariable->Write(data);
+    result.payload = result.status.IsOk();
 
-    if (!st.IsOk())
-        throw std::runtime_error(st.Message);
+    return result;
+
 }
 
 // -------------------- MOTION --------------------
 
-void MotomanRobot::motion_start()
+robot_result MotomanRobot::motion_start()
 {
     if (!connected)
-        throw std::runtime_error("Not connected");
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
-    StatusInfo st = controller->MotionManager->MotionStart();
+    robot_result result{};
+    result.status = controller->MotionManager->MotionStart();
+    result.payload = result.status.IsOk();
 
-    if (!st.IsOk())
-        throw std::runtime_error("MotionStart failed: " + st.Message);
+    return result;
 }
 
-void MotomanRobot::motion_stop(bool clearTrajectory)
+robot_result MotomanRobot::motion_stop(bool clearTrajectory)
 {
     if (!connected)
-        throw std::runtime_error("Not connected");
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
-    StatusInfo st =
-        controller->MotionManager->MotionStop(clearTrajectory);
+    robot_result result{};
+    result.status = controller->MotionManager->MotionStop(clearTrajectory);
+    result.payload = result.status.IsOk();
+    return result; 
 
-    if (!st.IsOk())
-        throw std::runtime_error("MotionStop failed: " + st.Message);
 }
 
-void MotomanRobot::clear_trajectory()
+robot_result MotomanRobot::clear_trajectory()
 {
     if (!connected)
-        //throw std::runtime_error("Not connected");
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
-    StatusInfo st =
-        controller->MotionManager->ClearAllTrajectory();
+    robot_result result{};
+    result.status = controller->MotionManager->ClearAllTrajectory();
+    result.payload = result.status.IsOk();
 
-    //if (!st.IsOk())
-      //  throw std::runtime_error("ClearAllTrajectory failed: " + st.Message);
+    return result;
+
 }
 
 // -------------------- TRAJECTORY --------------------
 
-void MotomanRobot::add_point_to_trajectory(const Position& pos)
+robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
 {
     if (!connected)
-        throw std::runtime_error("Not connected");
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
+
+    std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
+              << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
 
     Motion motion;
 
@@ -196,54 +305,77 @@ void MotomanRobot::add_point_to_trajectory(const Position& pos)
     // ---------------- Motion defaults ----------------
     motion.speed = robot_speed; // or expose later as parameter
     motion.speedType = SpeedType::VJ; // safe default for joint motion style
-
     motion.attributes = robot_motion_attributes;
-
     motion.accuracy = -1;
 
-    // ---------------- Execute ----------------
-    StatusInfo st =
-        controller->MotionManager->AddPointToTrajectory(motion);
+    robot_result result{};
+    result.status = controller->MotionManager->AddPointToTrajectory(motion);
+    result.payload = result.status.IsOk();
+    return result;
 
-    if (!st.IsOk())
+}
+
+bool MotomanRobot::HasReachedTarget()
+{
+    StatusInfo status;
+
+    DOUBLE64 progress = controller->MotionManager->GetMotionTargetProgress(ControlGroupId::R1, status);
+    if (!status.IsOk())
     {
-        throw std::runtime_error(
-            "AddPointToTrajectory failed: " + st.Message);
+        return false;
     }
+
+    INT32 stepsRemaining = 0;
+    StatusInfo stepStatus = controller->MotionManager->GetRemainingStepsInTrajectory(stepsRemaining);
+
+    if (!stepStatus.IsOk())
+    {
+        return false;
+    }
+
+    std::cout << "Motion progress: " << progress << "%, Steps remaining: " << stepsRemaining << std::endl;
+
+    return (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
 }
 
-void MotomanRobot::write_io_bit(UINT32 index, bool value)
+
+//-------------------- IO --------------------
+
+robot_result MotomanRobot::write_io_bit(UINT32 index, bool value)
 {
     if (!connected)
-        throw std::runtime_error("Not connected");
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
 
-    StatusInfo st = controller->Io->WriteBit(index,value);
+    robot_result result{};
+    result.status = controller->Io->WriteBit(index,value);
+    result.payload = result.status.IsOk();
 
-    if (!st.IsOk())
-        throw std::runtime_error("Write IoBit failed: " + st.Message);
+    return result;
+
 }
 
-void MotomanRobot::write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit)
+robot_result MotomanRobot::write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit)
 {
     if (!connected)
-        throw std::runtime_error("Not connected");
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
-    StatusInfo st = controller->Io->WriteBit(
+    robot_result result{};
+
+    result.status = controller->Io->WriteBit(
         IOType::GeneralOutput,
         group,
         bitPosition,
         ioBit);
+    result.payload = result.status.IsOk();
 
-    if (!st.IsOk())
-        throw std::runtime_error(
-            "WriteBit failed: " + st.Message);
+    return result;
 }
 
-bool MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
+robot_result MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
 {
     if (!connected)
-        throw std::runtime_error("Not connected");
+        return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
     bool ioBit;
 
@@ -253,9 +385,9 @@ bool MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPosition)
         bitPosition,
         ioBit);
 
-    return ioBit;
-
+    return robot_result{ st, ioBit };
 }
+
 
 
 
