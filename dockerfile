@@ -27,10 +27,29 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # =========================================================
-# Copy project
+# Copy python project toml
 # =========================================================
 
+COPY python/pyproject.toml /tmp/python/pyproject.toml
+
+# =========================================================
+# Install Large Dependancies
+# =========================================================
+
+RUN pip3 install --break-system-packages \
+    ultralytics \
+    opencv-python-headless \
+    numpy \
+    pyyaml
+
+
+# ========================================================
+# Copy Source Code
+# ========================================================
+
 COPY . /app
+
+RUN pip3 install --break-system-packages -e ./python
 
 # =========================================================
 # Build project
@@ -65,4 +84,4 @@ RUN echo "=== BUILT MODULES ===" && \
 # Start app
 # =========================================================
 
-CMD ["python3", "-m", "cobot.app.main"]
+CMD ["python3", "-m", "cobot_application.main"]

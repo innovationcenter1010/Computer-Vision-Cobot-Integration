@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cobot-system"
+name = "cobot_application"
 version = "0.1.0"
 
 dependencies = [
@@ -15,4 +15,4 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["cobot"]
+include = ["cobot_application*"]

@@ -32,6 +32,5 @@ target_include_directories(motoman_cpp PRIVATE
 target_link_libraries(motoman_cpp PRIVATE robot_core)
 
 set_target_properties(motoman_cpp PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/python/application
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/python/tests
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/python/cobot_application/cobot
 )
