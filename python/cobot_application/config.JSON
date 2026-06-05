@@ -21,40 +21,46 @@
   },
 
 
-   "vision_system": {
-      "SHOULD_RETRAIN_MODEL": False,
+  "vision_system": {
+    "TRAIN_MODEL": false,
 
-      "TRAINING_EPOCHS": 50,
-      "TRAINING_IMAGE_SIZE": 640,
-      "TRAINING_BATCH_SIZE": 1,
-      "TRAINING_DEVICE": "cpu",
+    "YOLO_BASE_MODEL": "yolo26n-obb.pt",
 
-      "YOLO_CONFIDENCE": 0.85,
-      "YOLO_IOU": 0.4,
-      "YOLO_MAX_DETECTIONS": 30,
+    "TRAINING_EPOCHS": 50,
+    "TRAINING_IMAGE_SIZE": 640,
+    "TRAINING_BATCH_SIZE": 1,
+    "TRAINING_DEVICE": "cpu",
 
-       "bin_configs": {
-           "image_corners": [
-             [120, 80],
-             [520, 75],
-             [550, 430],
-             [100, 440]
-             ],
+    "YOLO_CONFIDENCE": 0.85,
+    "YOLO_IOU": 0.4,
+    "YOLO_MAX_DETECTIONS": 30,
+    "YOLO_IMAGE_SIZE": 640,
 
-       "real_world_corners_mm": [
-             [0, 0],
-             [600, 0],
-             [600, 400],
-             [0, 400]
-            ],
+    "REMOVE_DUPLICATE_DETECTIONS": true,
+    "DUPLICATE_CENTER_DISTANCE_PX": 50,
 
-        "can_height_mm": 87,
+    "SAVE_ANNOTATED_IMAGES": true,
+    "ANNOTATED_IMAGE_SUFFIX": "_detections",
+    "KEEP_LATEST_OPERATION_IMAGES": 10,
 
-        "top_layer_height_mm": 265,
+    "VISION_LOOP_SLEEP_SECONDS": 1000,
 
-        "layer_threshold": 0.7
-     } 
+    "bin_configs": {
+      "image_corners": [
+        [120, 80],
+        [520, 75],
+        [550, 430],
+        [100, 440]
+      ],
+      "real_world_corners_mm": [
+        [0, 0],
+        [600, 0],
+        [600, 400],
+        [0, 400]
+      ],
+      "can_height_mm": 87,
+      "top_layer_height_mm": 265,
+      "layer_threshold": 0.7
+    }
   }
 }
-
-

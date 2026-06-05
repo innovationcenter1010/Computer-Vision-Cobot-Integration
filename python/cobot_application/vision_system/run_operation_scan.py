@@ -1,8 +1,8 @@
 from pathlib import Path
+
 import cv2
 
 from cobot_application.shared_data import Config
-from cobot_application.vision_system import config as vision_config
 from cobot_application.vision_system.homography import HomographyTranslator
 from cobot_application.vision_system.train_yolo_obb import train_yolo_obb
 from cobot_application.vision_system.yolo_obb_detector import (
@@ -10,6 +10,15 @@ from cobot_application.vision_system.yolo_obb_detector import (
     OBBDetection,
     remove_duplicate_detections,
 )
+
+
+# =========================================================
+# Hardcoded project paths
+# =========================================================
+
+MODEL_PATH = Path("/app/vision_workspace/models/cans_obb_best.pt")
+INBOX_DIR = Path("/app/vision_workspace/operation/inbox")
+RESULTS_DIR = Path("/app/vision_workspace/operation/results")
 
 
 IMAGE_EXTENSIONS = {
@@ -33,10 +42,11 @@ def get_image_files(folder: Path) -> list[Path]:
 
     return sorted(
         [
-            p for p in folder.iterdir()
-            if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+            path
+            for path in folder.iterdir()
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
         ],
-        key=lambda p: p.stat().st_mtime,
+        key=lambda path: path.stat().st_mtime,
     )
 
 
@@ -65,8 +75,6 @@ def save_annotated_image(
 ):
     """
     Saves an annotated image showing YOLO detections.
-
-    This uses the same loaded detector/model instead of loading YOLO again.
     """
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,137 +90,83 @@ def save_annotated_image(
     )
 
     if not results:
-        print(f"No visual results created for: {image_path.name}", flush=True)
+        print(f"No annotated image created for: {image_path.name}", flush=True)
         return
 
     annotated_image = results[0].plot()
     cv2.imwrite(str(output_path), annotated_image)
 
-    print(f"Saved image: {output_path}", flush=True)
+    print(f"Saved annotated image: {output_path}", flush=True)
 
 
-def train_if_requested(cobot_configs: dict, model_path: Path):
+def train_if_requested(vision_configs: dict):
     """
-    Handles optional YOLO training based on config.JSON.
+    Uses one config switch only:
 
-    Training happens only if:
-    - should_retrain_yolo_model is true, or
-    - force_retrain_yolo_model is true, or
-    - train_yolo_if_model_missing is true and the model file is missing.
+        TRAIN_MODEL = true   -> train/retrain model
+        TRAIN_MODEL = false  -> skip training and use existing model
+
+    If TRAIN_MODEL is false and MODEL_PATH does not exist, an error is raised.
     """
 
-    should_retrain = cobot_configs.get("should_retrain_yolo_model", False)
-    force_retrain = cobot_configs.get("force_retrain_yolo_model", False)
-    train_if_missing = cobot_configs.get("train_yolo_if_model_missing", True)
+    train_model = vision_configs["TRAIN_MODEL"]
 
-    model_missing = not model_path.exists()
-
-    if should_retrain or force_retrain:
-        print("YOLO retraining requested from config.JSON.", flush=True)
+    if train_model:
+        print("TRAIN_MODEL is true. Training YOLO model.", flush=True)
 
         train_yolo_obb(
+            vision_configs=vision_configs,
             force=True,
-            epochs=cobot_configs.get("training_epochs", 50),
-            imgsz=cobot_configs.get("training_image_size", 640),
-            batch=cobot_configs.get("training_batch_size", 1),
-            device=cobot_configs.get("training_device", "cpu"),
         )
 
         return
 
-    if train_if_missing and model_missing:
-        print("YOLO model is missing. Training model first.", flush=True)
+    print("TRAIN_MODEL is false. Skipping YOLO training.", flush=True)
 
-        train_yolo_obb(
-            force=True,
-            epochs=cobot_configs.get("training_epochs", 50),
-            imgsz=cobot_configs.get("training_image_size", 640),
-            batch=cobot_configs.get("training_batch_size", 1),
-            device=cobot_configs.get("training_device", "cpu"),
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(
+            f"TRAIN_MODEL is false, but YOLO model was not found: {MODEL_PATH}. "
+            f"Set TRAIN_MODEL to true in config.JSON to train a model first."
         )
 
-        return
 
-    print("YOLO training skipped. Existing model will be used.", flush=True)
-
-
-def scan_operation_folder(cobot_configs: dict) -> list[OBBDetection]:
+def scan_operation_folder(
+    vision_configs: dict,
+) -> list[OBBDetection]:
     """
-    Scans the operation inbox folder using YOLO OBB.
+    Scans operation images using YOLO OBB.
 
     This function:
-    1. Reads paths/settings from config.JSON via cobot_configs.
-    2. Optionally trains if requested or if model is missing.
-    3. Runs YOLO OBB on every image in the inbox.
-    4. Converts image center points to real-world X/Y with homography.
-    5. Saves JSON and optional annotated images.
-    6. Returns a list of OBBDetection objects.
+      1. Optionally trains the model based on TRAIN_MODEL.
+      2. Loads the saved YOLO model.
+      3. Scans images from INBOX_DIR.
+      4. Converts detected image centers to real-world X/Y using homography.
+      5. Saves JSON and annotated images.
+      6. Returns a list of OBBDetection objects.
     """
 
-    model_path = Path(
-        cobot_configs.get(
-            "yolo_model_path",
-            "/app/vision_workspace/models/cans_obb_best.pt",
-        )
-    )
+    conf = vision_configs["YOLO_CONFIDENCE"]
+    iou = vision_configs["YOLO_IOU"]
+    max_det = vision_configs["YOLO_MAX_DETECTIONS"]
+    imgsz = vision_configs["YOLO_IMAGE_SIZE"]
 
-    inbox_dir = Path(
-        cobot_configs.get(
-            "operation_inbox_dir",
-            "/app/vision_workspace/operation/inbox",
-        )
-    )
+    remove_duplicates = vision_configs["REMOVE_DUPLICATE_DETECTIONS"]
+    duplicate_center_distance_px = vision_configs["DUPLICATE_CENTER_DISTANCE_PX"]
 
-    results_dir = Path(
-        cobot_configs.get(
-            "operation_results_dir",
-            "/app/vision_workspace/operation/results",
-        )
-    )
+    save_annotated_images = vision_configs["SAVE_ANNOTATED_IMAGES"]
+    annotated_image_suffix = vision_configs["ANNOTATED_IMAGE_SUFFIX"]
 
-    keep_latest_operation_images = cobot_configs.get(
-        "keep_latest_operation_images",
-        10,
-    )
+    keep_latest_operation_images = vision_configs["KEEP_LATEST_OPERATION_IMAGES"]
 
-    conf = cobot_configs.get("yolo_confidence", 0.85)
-    iou = cobot_configs.get("yolo_iou", 0.4)
-    max_det = cobot_configs.get("yolo_max_detections", 30)
-    imgsz = cobot_configs.get("yolo_image_size", 640)
+    bin_configs = vision_configs["bin_configs"]
 
-    remove_duplicates = cobot_configs.get(
-        "remove_duplicate_detections",
-        True,
-    )
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    duplicate_center_distance_px = cobot_configs.get(
-        "duplicate_center_distance_px",
-        50,
-    )
-
-    save_images = cobot_configs.get(
-        "save_annotated_images",
-        True,
-    )
-
-    annotated_suffix = cobot_configs.get(
-        "annotated_image_suffix",
-        "_detections",
-    )
-
-    inbox_dir.mkdir(parents=True, exist_ok=True)
-    results_dir.mkdir(parents=True, exist_ok=True)
-
-    train_if_requested(cobot_configs, model_path)
-
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"Model not found: {model_path}. "
-            f"Train the model first or set train_yolo_if_model_missing=true."
-        )
+    train_if_requested(vision_configs)
 
     detector = YoloOBBDetector(
-        model_path=model_path,
+        model_path=MODEL_PATH,
         conf=conf,
         imgsz=imgsz,
         iou=iou,
@@ -220,14 +174,14 @@ def scan_operation_folder(cobot_configs: dict) -> list[OBBDetection]:
     )
 
     translator = HomographyTranslator(
-        vision_config.BIN_IMAGE_CORNERS,
-        vision_config.BIN_REAL_WORLD_CORNERS,
+        bin_configs["image_corners"],
+        bin_configs["real_world_corners_mm"],
     )
 
-    images = get_image_files(inbox_dir)
+    images = get_image_files(INBOX_DIR)
 
     if not images:
-        print(f"No operation images found in: {inbox_dir}", flush=True)
+        print(f"No operation images found in: {INBOX_DIR}", flush=True)
         return []
 
     all_detections: list[OBBDetection] = []
@@ -246,20 +200,20 @@ def scan_operation_folder(cobot_configs: dict) -> list[OBBDetection]:
                 min_center_distance_px=duplicate_center_distance_px,
             )
 
-        for det in detections:
+        for detection in detections:
             real_x, real_y = translator.translate_point(
-                det.center_x,
-                det.center_y,
+                detection.center_x,
+                detection.center_y,
             )
 
-            det.real_x = float(real_x)
-            det.real_y = float(real_y)
+            detection.real_x = float(real_x)
+            detection.real_y = float(real_y)
 
-        output_json = results_dir / f"{image_path.stem}.json"
+        output_json = RESULTS_DIR / f"{image_path.stem}.json"
         detector.save_json(detections, output_json)
 
-        if save_images:
-            output_image = results_dir / f"{image_path.stem}{annotated_suffix}.jpg"
+        if save_annotated_images:
+            output_image = RESULTS_DIR / f"{image_path.stem}{annotated_image_suffix}.jpg"
 
             save_annotated_image(
                 detector=detector,
@@ -273,26 +227,28 @@ def scan_operation_folder(cobot_configs: dict) -> list[OBBDetection]:
         all_detections.extend(detections)
 
     cleanup_keep_latest(
-        inbox_dir,
-        keep_latest_operation_images,
+        folder=INBOX_DIR,
+        keep_latest=keep_latest_operation_images,
     )
 
     return all_detections
 
 
-def run_YOLO(cobot_configs: dict) -> list[OBBDetection]:
+def run_YOLO(
+    vision_configs: dict,
+) -> list[OBBDetection]:
     """
-    Main callable YOLO function used by Vision_Controller.
+    Main YOLO function called by Vision_Controller.
 
     Vision_Controller should call:
 
-        detections = run_YOLO(self.configurations.as_dict()["cobot_configs"])
+        detections = run_YOLO(self.configurations.as_dict()["vision_system"])
 
     Returns:
-        list of OBBDetection objects.
+        list of OBBDetection can objects.
     """
 
-    detections = scan_operation_folder(cobot_configs)
+    detections = scan_operation_folder(vision_configs)
 
     print(f"Total YOLO detections returned: {len(detections)}", flush=True)
 
@@ -307,9 +263,9 @@ def main():
     """
 
     configurations = Config()
-    cobot_configs = configurations.as_dict()["cobot_configs"]
+    vision_configs = configurations.as_dict()["vision_system"]
 
-    detections = run_YOLO(cobot_configs)
+    detections = run_YOLO(vision_configs)
 
     print(f"Direct run complete. Detections: {len(detections)}", flush=True)
 
