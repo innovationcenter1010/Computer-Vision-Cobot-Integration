@@ -1,7 +1,23 @@
 {
   "cobot_configs": {
-    "cobot_ip": "192.168.1.10"
+    "cobot_ip": "192.168.1.31",
+    "tool_head_length_mm": 620,
+    "tool_head_compression_distance_mm": 50,
 
+    "cobot_place_positions": { 
+        "place_position_a": [100, -925, 400, 180, 0, -90],
+
+        "place_position_b": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+        ]
+
+    }
+        
   },
 
   "bin_configs": {
@@ -22,8 +38,6 @@
     "can_height_mm": 87,
 
     "top_layer_height_mm": 265,
-
-    "tool_head_length_mm": 600,
 
     "layer_threshold": 0.7
   }

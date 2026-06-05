@@ -1,6 +1,8 @@
 import asyncio
 import json
 from pathlib import Path
+from enum import Enum,auto
+
 
 
 class Config:
@@ -29,6 +31,12 @@ class P2P_command():
         self.sender_ID = sender_ID
         self.message = message
         self.value = value
+
+class sender_ID(Enum):
+    cobot_id = auto()
+    vision_id = auto()
+    camera_id = auto()
+    web_id = auto()
         
 #network for easy communication between controll loops
 class Py_network():
