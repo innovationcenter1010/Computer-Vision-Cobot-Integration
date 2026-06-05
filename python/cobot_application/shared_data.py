@@ -33,12 +33,12 @@ class Py_network():
         self.camera_commands = asyncio.Queue()
         self.cobot_commands = asyncio.Queue()
         self.web_commands = asyncio.Queue()
-        self.yolo_commands = asyncio.Queue()
+        self.vision_commands = asyncio.Queue()
 
         self.camera_state = "not initialized"
         self.cobot_state = "not initialized"
         self.web_state = "not initialized"
-        self.yolo_state =  "not initialized"
+        self.vision_state =  "not initialized"
 
 
 
