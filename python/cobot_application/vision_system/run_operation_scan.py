@@ -2,10 +2,10 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
-from cobot.app.vision_system import config
-from cobot.app.vision_system.homography import HomographyTranslator
-from cobot.app.vision_system.train_yolo_obb import train_yolo_obb
-from cobot.app.vision_system.yolo_obb_detector import (
+from cobot_application.vision_system import config
+from cobot_application.vision_system.homography import HomographyTranslator
+from cobot_application.vision_system.train_yolo_obb import train_yolo_obb
+from cobot_application.vision_system.yolo_obb_detector import (
     YoloOBBDetector,
     remove_duplicate_detections,
 )
