@@ -1,7 +1,7 @@
 import asyncio
 from cobot_application.shared_data import Py_network,Config
 
-#from camera_controller import camera_controller
+from cobot_application.camera.camera_controller import Camera_Controller
 from cobot_application.cobot.cobot_controller import Cobot_Controller
 from cobot_application.vision_system.vision_controller import Vision_Controller
 #from webpage_controller import Webpage_Controller
@@ -16,11 +16,13 @@ async def main():
 
     cobot = Cobot_Controller(application_network,application_configurations)
     vision = Vision_Controller(application_network,application_configurations)
+    camera = Camera_Controller(application_network,application_configurations)
+
 
     tasks = [
-        #asyncio.create_task(
-        #    camera_loop(camera_queue, state)
-        #),
+        asyncio.create_task(
+            camera.loop()
+        ),
 
         asyncio.create_task(
             vision.loop()
