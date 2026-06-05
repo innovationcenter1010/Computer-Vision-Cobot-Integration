@@ -6,11 +6,11 @@ from enum import Enum,auto
 GRIPPER_ON = True
 GRIPPER_OFF = False
 
-
+#struct containing the the status of a large cobot operation
 class Cobot_Operation_Report(Enum):
-    SUCCESS = auto()
-    PICK_FAILURE = auto()
-    PLACE_FAILURE = auto()
+    SUCCESS = 0
+    PICK_FAILURE = 1
+    PLACE_FAILURE = 2
 
 
 class Cobot:
@@ -33,7 +33,9 @@ class Cobot:
 
         self.gripper_io_group = 1
         self.gripper_io_bit = 2
-        self.targets = []
+
+        #cast the position data from configs.JSO into the position type compatible with the cobot 
+        self.target = motoman_cpp.Position(self.cobot_configs["place_position_a"])
 
     
 
@@ -42,19 +44,16 @@ class Cobot:
         tooling_offset = self.cobot_configs["tool_head_length_mm"]
         compression_offset = self.cobot_configs["tool_head_compression_distance"]
 
-        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 0, 0, can.real_rz)
-        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z + 200, 0, 0, can.real_rz)
+        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 180, 0, can.real_rz)
+        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 180, 0, can.real_rz)
         pickup_trajectory = [cobot_address_can_position,cobot_pickup_position]
-
-
-
 
         for position in pickup_trajectory:
             await self.goto(position)
 
         self._set_gripper(GRIPPER_ON)
 
-        await self.goto(self.targets[0])
+        await self.goto(self.target)
 
         self._set_gripper(GRIPPER_OFF)
     
@@ -69,6 +68,10 @@ class Cobot:
 
     def _set_gripper(self, state: bool):
         return self.robot.set_general_output_bit(self.gripper_io_group, self.gripper_io_bit, state)
+    
+
+
+
     
 
 
