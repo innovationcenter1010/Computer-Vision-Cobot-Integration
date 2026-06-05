@@ -35,14 +35,14 @@ class Cobot:
         self.gripper_io_bit = 2
 
         #cast the position data from configs.JSO into the position type compatible with the cobot 
-        self.target = motoman_cpp.Position(self.cobot_configs["place_position_a"])
+        self.target = motoman_cpp.Position(*(self.cobot_configs["cobot_place_positions"])["place_position_a"])
 
     
 
 
     async def pick_and_place(self, can):
         tooling_offset = self.cobot_configs["tool_head_length_mm"]
-        compression_offset = self.cobot_configs["tool_head_compression_distance"]
+        compression_offset = self.cobot_configs["tool_head_compression_distance_mm"]
 
         cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 180, 0, can.real_rz)
         cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 180, 0, can.real_rz)
@@ -67,7 +67,7 @@ class Cobot:
         self.robot.disconnect()
 
     def _set_gripper(self, state: bool):
-        return self.robot.set_general_output_bit(self.gripper_io_group, self.gripper_io_bit, state)
+        return self.robot.write_general_output_bit(self.gripper_io_group, self.gripper_io_bit, state)
     
 
 

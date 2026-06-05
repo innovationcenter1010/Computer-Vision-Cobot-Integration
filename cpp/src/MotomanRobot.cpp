@@ -57,6 +57,8 @@ robot_result MotomanRobot::connect()
     result.status = status;
     result.payload = status.IsOk();
 
+    std::cout << "connection successful";
+
     return result;
 }
 

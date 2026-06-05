@@ -24,9 +24,9 @@ async def main():
             camera.loop()
         ),
 
-        asyncio.create_task(
-            vision.loop()
-        ),
+        #asyncio.create_task(
+        #    vision.loop()
+        #),
 
         #asyncio.create_task(
         #    robot_loop(robot_queue, state)

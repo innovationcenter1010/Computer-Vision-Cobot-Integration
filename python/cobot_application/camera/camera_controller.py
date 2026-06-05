@@ -13,7 +13,7 @@ class Camera_Controller():
     async def loop(self):
         while True:
 
-            pickup = create_fake_can(0,-925,500,0)
+            pickup = [create_fake_can(0,-925,500,0)]
 
             layer_command = P2P_command(self.id,"pickup",pickup)
             await self.network.cobot_commands.put(layer_command)
