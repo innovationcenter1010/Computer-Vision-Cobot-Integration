@@ -1,5 +1,5 @@
 from cobot_application.cobot import motoman_cpp
-from cobot_application.cobot.layers import Can
+from cobot_application.vision_system.layers import Can
 import asyncio
 from enum import Enum,auto
 
