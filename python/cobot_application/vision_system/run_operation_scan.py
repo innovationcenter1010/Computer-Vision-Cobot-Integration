@@ -177,12 +177,34 @@ def scan_operation_folder(
     return all_detections
 
 
-def run_YOLO():
-    scan_operation_folder(
-        retrain_if_missing=True,
+def run_YOLO(cobot_configs: dict) -> list:
+    """
+    Runs the YOLO OBB vision pipeline using values from config.JSON.
+
+    Returns:
+        list of OBBDetection objects.
+    """
+
+    should_retrain_model = cobot_configs.get("should_retrain_yolo_model", False)
+
+    if should_retrain_model:
+        print("Retraining YOLO model from config request.", flush=True)
+
+        train_yolo_obb(
+            force=True,
+            epochs=cobot_configs.get("training_epochs", 50),
+            imgsz=cobot_configs.get("training_image_size", 640),
+            batch=cobot_configs.get("training_batch_size", 1),
+            device=cobot_configs.get("training_device", "cpu"),
+        )
+
+    detections = scan_operation_folder(
+        retrain_if_missing=cobot_configs.get("train_yolo_if_model_missing", True),
         force_retrain=False,
-        conf=0.85,
-        iou=0.4,
-        max_det=30,
-        remove_duplicates=True,
+        conf=cobot_configs.get("yolo_confidence", 0.85),
+        iou=cobot_configs.get("yolo_iou", 0.4),
+        max_det=cobot_configs.get("yolo_max_detections", 30),
+        remove_duplicates=cobot_configs.get("remove_duplicate_detections", True),
     )
+
+    return detections
