@@ -1,5 +1,5 @@
-import python.cobot.application.config as config
-from python.cobot.application.layers import OrderedLayer
+import python.cobot.app.vision_system.config as config
+from python.cobot.app.vision_system.layers import OrderedLayer
 
 
 class Bin:

@@ -1,0 +1,6 @@
+services:
+  cobot-ai:
+    image: cobot-ai
+    volumes:
+      - ./vision_workspace:/app/vision_workspace
+      s
