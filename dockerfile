@@ -189,13 +189,4 @@ RUN echo "=== BUILT MODULES ===" && \
 
 # =========================================================
 
-<<<<<<< HEAD
 CMD ["python3", "-m", "cobot_application.main"]
-=======
-# Start app
-
-# =========================================================
-
- 
-CMD ["python3", "-m", "cobot.app.vision_system.sample_main"]
->>>>>>> FixingPython&VisionSystem
