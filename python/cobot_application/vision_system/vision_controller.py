@@ -9,5 +9,6 @@ class Vision_Controller():
         print("vision system awake")
 
     async def loop():
-        print("computer vision functions")
-        await asyncio.sleep(0.2)
+        while True:
+            print("computer vision functions")
+            await asyncio.sleep(1)

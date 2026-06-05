@@ -13,7 +13,9 @@ class Cobot_Controller():
         
     async def loop(self):
         while True: 
+            
             print("cobot looping")
+            await asyncio.sleep(1)
 
 
 
