@@ -6,9 +6,9 @@ class Vision_Controller():
     def __init__(self,network,configurations):
         self.network = network
         self.configurations = configurations
-        print("vision system awake")
+        print("vision system awake",flush=True)
 
-    async def loop():
+    async def loop(self):
         while True:
-            print("computer vision functions")
+            print("computer vision functions",flush=True)
             await asyncio.sleep(1)

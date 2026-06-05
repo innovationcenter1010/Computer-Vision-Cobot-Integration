@@ -9,12 +9,12 @@ class Cobot_Controller():
         self.network = network
         self.configurations = configurations
         #cobot = Cobot(configurations.get("cobot_ip"))
-        print("hi")
+        print("Cobot awake",flush=True)
         
     async def loop(self):
         while True: 
-            
-            print("cobot looping")
+    
+            print("cobot looping",flush=True)
             await asyncio.sleep(1)
 
 
