@@ -67,10 +67,10 @@ class OrderedLayer(Layer):
         super().__init__(json_file_path)
 
         # Step 2: Order cans in snake-pattern (local import avoids circular dependency)
-        from python.cobot.application.pathing import order_layer
+        from python.cobot.app.vision_system.pathing import order_layer
         order_layer(self)
 
         # Step 3: Translate pixel coordinates to real-world coordinates
-        from python.cobot.application.homography import HomographyTranslator
+        from python.cobot.app.vision_system.homography import HomographyTranslator
         translator = HomographyTranslator(image_corners, real_world_corners)
         translator.translate_layer(self)

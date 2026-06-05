@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import math
 
 import numpy as np
 from ultralytics import YOLO
@@ -10,39 +11,72 @@ from ultralytics import YOLO
 class OBBDetection:
     class_id: int
     confidence: float
+
     pixel_corners: list
     normalized_corners: list
+
     center_x: float
     center_y: float
 
+    real_x: float | None = None
+    real_y: float | None = None
+    real_z: float | None = None
+    real_rz: float | None = None
+
+    image_path: str | None = None
+
 
 class YoloOBBDetector:
-    def __init__(self, model_path: str | Path, conf: float = 0.25, imgsz: int = 640):
+    def __init__(
+        self,
+        model_path: str | Path,
+        conf: float = 0.85,
+        imgsz: int = 640,
+        iou: float = 0.4,
+        max_det: int = 30,
+    ):
         self.model_path = Path(model_path)
 
         if not self.model_path.exists():
-            raise FileNotFoundError(
-                f"YOLO model not found: {self.model_path}. "
-                f"Train the model first."
-            )
+            raise FileNotFoundError(f"YOLO OBB model not found: {self.model_path}")
 
         self.conf = conf
         self.imgsz = imgsz
+        self.iou = iou
+        self.max_det = max_det
+
         self.model = YOLO(str(self.model_path))
 
-    def detect(self, image_path: str | Path) -> list[OBBDetection]:
+    def detect(
+        self,
+        image_path: str | Path,
+        save_visual: bool = False,
+        visual_project_dir: str | Path | None = None,
+        visual_name: str | None = None,
+    ) -> list[OBBDetection]:
+
         image_path = Path(image_path)
 
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
 
-        results = self.model.predict(
-            source=str(image_path),
-            imgsz=self.imgsz,
-            conf=self.conf,
-            save=False,
-            verbose=False,
-        )
+        predict_args = {
+            "source": str(image_path),
+            "imgsz": self.imgsz,
+            "conf": self.conf,
+            "iou": self.iou,
+            "max_det": self.max_det,
+            "save": save_visual,
+            "verbose": False,
+        }
+
+        if save_visual and visual_project_dir is not None:
+            predict_args["project"] = str(visual_project_dir)
+
+        if save_visual and visual_name is not None:
+            predict_args["name"] = visual_name
+
+        results = self.model.predict(**predict_args)
 
         detections: list[OBBDetection] = []
 
@@ -68,21 +102,25 @@ class YoloOBBDetector:
             ):
                 box = np.array(box, dtype=float)
 
+                center_x = float(box[:, 0].mean())
+                center_y = float(box[:, 1].mean())
+
                 detections.append(
                     OBBDetection(
                         class_id=int(cls),
                         confidence=float(conf),
                         pixel_corners=box.tolist(),
                         normalized_corners=norm_box.tolist(),
-                        center_x=float(box[:, 0].mean()),
-                        center_y=float(box[:, 1].mean()),
+                        center_x=center_x,
+                        center_y=center_y,
+                        image_path=str(image_path),
                     )
                 )
 
         return detections
 
     @staticmethod
-    def save_detections_json(detections: list[OBBDetection], output_path: str | Path):
+    def save_json(detections: list[OBBDetection], output_path: str | Path):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -94,8 +132,48 @@ class YoloOBBDetector:
                 "center_y": det.center_y,
                 "pixel_corners": det.pixel_corners,
                 "normalized_corners": det.normalized_corners,
+                "real_x": det.real_x,
+                "real_y": det.real_y,
+                "real_z": det.real_z,
+                "real_rz": det.real_rz,
+                "image_path": det.image_path,
             }
             for det in detections
         ]
 
         output_path.write_text(json.dumps(data, indent=2))
+
+
+def remove_duplicate_detections(
+    detections: list[OBBDetection],
+    min_center_distance_px: float = 50.0,
+) -> list[OBBDetection]:
+    """
+    Removes detections whose centers are too close together.
+    Keeps the highest-confidence detection.
+    """
+
+    sorted_detections = sorted(
+        detections,
+        key=lambda det: det.confidence,
+        reverse=True,
+    )
+
+    kept: list[OBBDetection] = []
+
+    for det in sorted_detections:
+        duplicate = False
+
+        for kept_det in kept:
+            dx = det.center_x - kept_det.center_x
+            dy = det.center_y - kept_det.center_y
+            distance = math.sqrt(dx * dx + dy * dy)
+
+            if distance < min_center_distance_px:
+                duplicate = True
+                break
+
+        if not duplicate:
+            kept.append(det)
+
+    return kept
