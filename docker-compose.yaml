@@ -1,6 +1,19 @@
 services:
   cobot-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
     image: cobot-ai
+
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      YOLO_CONFIG_DIR: /tmp/Ultralytics
+
     volumes:
       - ./vision_workspace:/app/vision_workspace
-      s
+
+    command: python3 -m cobot_application.main
+
+    stdin_open: true
+    tty: true
