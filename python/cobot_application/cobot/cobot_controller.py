@@ -6,7 +6,7 @@ from cobot_application.shared_data import Py_network, Config, sender_ID, P2P_com
 
 
 class Cobot_Controller():
-    def __init__(self,network,configurations):
+    def __init__(self,network: Py_network,configurations):
         self.network = network
         self.command_queue = network.cobot_commands
         self.configurations = configurations
@@ -15,13 +15,15 @@ class Cobot_Controller():
         
     async def loop(self):
         while True: 
+
+            print("Waiting for command...", flush=True)
+
             command = await self.command_queue.get()
 
-            if(command.sender_ID == sender_ID.camera_id or command.sender_ID == sender_ID.vision_id):
-                print("command recived!")
+            print("command recived!",flush=True)
 
-                for can in command.value:
-                    await self.cobot.pick_and_place(can)
+            for can in command.value:
+                await self.cobot.pick_and_place(can)
 
                 
 

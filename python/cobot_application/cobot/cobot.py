@@ -1,5 +1,5 @@
 from cobot_application.cobot import motoman_cpp
-from cobot_application.vision_system.layers import Can
+from cobot_application.vision_system.yolo_obb_detector import OBBDetection
 import asyncio
 from enum import Enum,auto
 
@@ -21,6 +21,7 @@ class Cobot:
         self.cobot_configs = cobot_configs
         self.robot = motoman_cpp.MotomanRobot(cobot_configs["cobot_ip"])
         
+
         for attempt in range(5):
             result = self.robot.connect()
             if result.status.is_ok():
@@ -40,12 +41,12 @@ class Cobot:
     
 
 
-    async def pick_and_place(self, can):
+    async def pick_and_place(self, can: OBBDetection):
         tooling_offset = self.cobot_configs["tool_head_length_mm"]
         compression_offset = self.cobot_configs["tool_head_compression_distance_mm"]
 
-        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 180, 0, can.real_rz)
-        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y, can.real_z, 180, 0, can.real_rz)
+        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 400, 180, 0, 0)
+        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y, 400, 180, 0, 0)
         pickup_trajectory = [cobot_address_can_position,cobot_pickup_position]
 
         for position in pickup_trajectory:
