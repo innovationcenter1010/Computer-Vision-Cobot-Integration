@@ -14,7 +14,8 @@ class Vision_Controller():
     async def loop(self):
         while True:
             detections = run_YOLO(self.configurations.as_dict()["vision_system"])
+            print("Vision system detections:", flush=True)
             layer_command = P2P_command(self.id,"pickup",detections)
             await self.command_queue.put(layer_command)
-            #print("computer vision functions",flush=True)
+            print("computer vision functions",flush=True)
             await asyncio.sleep(1000)

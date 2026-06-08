@@ -14,7 +14,7 @@ async def main():
     application_network = Py_network()
     application_configurations = Config()
 
-    #cobot = Cobot_Controller(application_network,application_configurations)
+    cobot = Cobot_Controller(application_network,application_configurations)
     vision = Vision_Controller(application_network,application_configurations)
     #camera = Camera_Controller(application_network,application_configurations)
 
@@ -23,13 +23,14 @@ async def main():
 
         #asyncio.create_task(camera.loop())
 
-       asyncio.create_task(vision.loop())
+       asyncio.create_task(vision.loop()),
 
         #asyncio.create_task(
         #    robot_loop(robot_queue, state)
         #),
 
-       #asyncio.create_task(cobot.loop())
+       
+        asyncio.create_task(cobot.loop())
     ]
 
     await asyncio.gather(*tasks)
