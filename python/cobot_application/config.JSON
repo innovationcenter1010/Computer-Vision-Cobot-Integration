@@ -65,5 +65,17 @@
       "top_layer_height_mm": 265,
       "layer_threshold": 0.7
     }
-  }
-}
+  },
+
+
+   "camera":{
+     "connection_type": "ETHERNET",
+     "camera_ip": "192.168.1.50",
+     "save_folder": "results/images",
+     "image_format": "jpg",
+      "trigger_mode": "software",
+     "exposure": 5000,
+      "gain": 1.2,
+      "timeout_seconds": 5
+    }
+  } 
