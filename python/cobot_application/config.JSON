@@ -58,6 +58,9 @@
         [-677.22,-565.96],
         [448.22, -565.96]
       ],
+
+      "pathing_row_tolerance_mm": 100,
+
       "can_height_mm": 87,
       "top_layer_height_mm": 265,
       "layer_threshold": 0.7

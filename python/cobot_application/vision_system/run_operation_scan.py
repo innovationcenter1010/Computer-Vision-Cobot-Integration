@@ -5,6 +5,10 @@ import cv2
 from cobot_application.shared_data import Config
 from cobot_application.vision_system.homography import HomographyTranslator
 from cobot_application.vision_system.train_yolo_obb import train_yolo_obb
+from cobot_application.vision_system.pathing import(
+    order_obb_detections_by_real_position,
+    print_obb_order,
+)
 from cobot_application.vision_system.yolo_obb_detector import (
     YoloOBBDetector,
     OBBDetection,
@@ -208,6 +212,17 @@ def scan_operation_folder(
 
             detection.real_x = float(real_x)
             detection.real_y = float(real_y)
+
+        detections = order_obb_detections_by_real_position(
+             detections=detections,
+             real_world_corners_mm=bin_configs["real_world_corners_mm"],
+             row_tolerance_mm=bin_configs["pathing_row_tolerance_mm"],
+        )
+
+        print_obb_order(
+            detections=detections,
+            real_world_corners_mm=bin_configs["real_world_corners_mm"],
+        )
 
         output_json = RESULTS_DIR / f"{image_path.stem}.json"
         detector.save_json(detections, output_json)
