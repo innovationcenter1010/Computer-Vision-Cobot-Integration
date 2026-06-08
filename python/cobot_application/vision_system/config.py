@@ -21,7 +21,7 @@ BIN_REAL_WORLD_CORNERS =[
 CAN_HEIGHT = 87 #!!!! NOT MEASURED YET !!!!!
 
 #Layer height z coordinate (assume bin filled with 7 layers of crush cans)
-LAYER_Z1 = -40   #!!!!!!!! NOT MEASURED YET !!!!!!!!!
+LAYER_Z1 = 400   #!!!!!!!! NOT MEASURED YET !!!!!!!!!
 LAYER_Z2 = LAYER_Z1-CAN_HEIGHT
 LAYER_Z3 = LAYER_Z2-CAN_HEIGHT
 LAYER_Z4 = LAYER_Z3-CAN_HEIGHT

@@ -1,5 +1,5 @@
-from cobot.app.vision_system.run_operation_scan import scan_operation_folder
-from cobot.app.vision_system.train_yolo_obb import train_yolo_obb
+from cobot_application.vision_system.run_operation_scan import scan_operation_folder
+from cobot_application.vision_system.train_yolo_obb import train_yolo_obb
 
 
 # =========================================================
