@@ -31,9 +31,9 @@
     "TRAINING_BATCH_SIZE": 1,
     "TRAINING_DEVICE": "cpu",
 
-    "YOLO_CONFIDENCE": 0.70,
+    "YOLO_CONFIDENCE": 0.15,
     "YOLO_IOU": 0.4,
-    "YOLO_MAX_DETECTIONS": 30,
+    "YOLO_MAX_DETECTIONS": 20,
     "YOLO_IMAGE_SIZE": 640,
 
     "REMOVE_DUPLICATE_DETECTIONS": true,
@@ -47,10 +47,10 @@
 
     "bin_configs": {
       "image_corners": [
-        [3477, 1388], 
-        [3902, 3961],
-        [570, 3852],
-        [1117, 1372]
+        [3680, 709], 
+        [3828, 4052],
+        [279, 3913],
+        [684,652]
       ],
       "real_world_corners_mm": [
         [448.22,-1600],
@@ -59,7 +59,7 @@
         [448.22, -565.96]
       ],
 
-      "pathing_row_tolerance_mm": 100,
+      "pathing_row_tolerance_mm": 50,
 
       "can_height_mm": 87,
       "top_layer_height_mm": 265,

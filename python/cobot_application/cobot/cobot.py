@@ -45,24 +45,24 @@ class Cobot:
         tooling_offset = self.cobot_configs["tool_head_length_mm"]
         compression_offset = self.cobot_configs["tool_head_compression_distance_mm"]
 
-        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 400, 180, 0, 0)
-        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y, 400, 180, 0, 0)
+        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, -100, 180, 0, 0)
+        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y, -100, 180, 0, 0)
         pickup_trajectory = [cobot_address_can_position,cobot_pickup_position]
 
         for position in pickup_trajectory:
             await self.goto(position)
 
-        self._set_gripper(GRIPPER_ON)
+        #self._set_gripper(GRIPPER_ON)
 
         await self.goto(self.target)
 
-        self._set_gripper(GRIPPER_OFF)
+        #self._set_gripper(GRIPPER_OFF)
     
     async def goto(self,position):
-        self.robot.add_point_to_trajectory(position)
-        self.robot.motion_start()
-        while not self.robot.has_reached_target():
-            await asyncio.sleep(0.2)
+        if (self.robot.add_point_to_trajectory(position).status.status_code == 0):
+            self.robot.motion_start()
+            while not self.robot.has_reached_target():
+                await asyncio.sleep(0.2)
 
     def disconnect(self):
         self.robot.disconnect()
