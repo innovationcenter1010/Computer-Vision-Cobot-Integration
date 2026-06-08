@@ -32,3 +32,7 @@ MANIFEST
 venv/
 ENV/
 env/
+
+# Testser
+
+test_can.json
