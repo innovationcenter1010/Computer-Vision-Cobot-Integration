@@ -400,7 +400,7 @@ robot_result MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPositi
     bool ioBit;
 
     StatusInfo st = controller->Io->ReadBit(
-        IOType::GeneralOutput,
+        IOType::GeneralInput,
         group,
         bitPosition,
         ioBit);
