@@ -50,5 +50,44 @@ async function loadLatestImage() {
     }
 }
 
+let socket = null;
+
+function connectWebSocket() {
+    socket = new WebSocket("ws://127.0.0.1:8000/ws");
+
+    socket.onopen = function () {
+        console.log("WebSocket connected");
+        document.getElementById("robot_command_status").innerText = "WebSocket connected";
+    };
+
+    socket.onmessage = function (event) {
+        const data = JSON.parse(event.data);
+        console.log("WebSocket message:", data);
+
+        if (data.type === "command_result") {
+            document.getElementById("robot_command_status").innerText =
+                data.result.message;
+        }
+    };
+
+    socket.onclose = function () {
+        console.log("WebSocket disconnected");
+        document.getElementById("robot_command_status").innerText = "WebSocket disconnected";
+    };
+}
+
+function sendRobotCommand(command) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        document.getElementById("robot_command_status").innerText =
+            "WebSocket is not connected";
+        return;
+    }
+
+    socket.send(JSON.stringify({
+        command: command
+    }));
+}
+
+connectWebSocket();
 loadConfig();
 loadLatestImage();

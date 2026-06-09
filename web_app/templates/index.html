@@ -42,3 +42,21 @@
     <script src="/static/app.js"></script>
 </body>
 </html>
+
+<div class="section">
+    <h2>Robot Controls</h2>
+
+    <button onclick="sendRobotCommand('calibrate_robot')" class="start">
+        Calibrate Robot
+    </button>
+
+    <button onclick="sendRobotCommand('start_robot')" class="start">
+        Start Robot
+    </button>
+
+    <button onclick="sendRobotCommand('stop_robot')" class="danger">
+        Stop Robot
+    </button>
+
+    <p id="robot_command_status">Not connected</p>
+</div>

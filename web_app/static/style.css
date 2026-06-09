@@ -42,3 +42,15 @@ button {
     max-width: 650px;
     border: 1px solid #ccc;
 }
+
+.danger {
+    background: #b00020;
+    color: white;
+    border: none;
+}
+
+.start {
+    background: #008000;
+    color: white;
+    border: none;
+}
