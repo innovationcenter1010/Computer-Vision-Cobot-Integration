@@ -53,7 +53,8 @@ async function loadLatestImage() {
 let socket = null;
 
 function connectWebSocket() {
-    socket = new WebSocket("ws://127.0.0.1:8000/ws");
+    const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+    socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws`);
 
     socket.onopen = function () {
         console.log("WebSocket connected");
