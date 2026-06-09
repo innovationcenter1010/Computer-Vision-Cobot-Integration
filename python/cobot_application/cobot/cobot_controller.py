@@ -1,7 +1,7 @@
 
 import asyncio
 
-from cobot_application.cobot.cobot import Cobot
+from cobot_application.cobot.cobot import Cobot, Cobot_Operation_Report
 from cobot_application.shared_data import Py_network, Config, sender_ID, P2P_command
 
 #cobot controller class for initializing and looping cobot functionality
@@ -24,7 +24,9 @@ class Cobot_Controller():
 
             for can in command.value:
                 await asyncio.sleep(1)
-                await self.cobot.pick_and_place(can)
+                r = Cobot_Operation_Report()
+                r = await self.cobot.pick_and_place(can)
+                print(r)
 
             print("comand recived!!!",flush=True)
             await asyncio.sleep(1)

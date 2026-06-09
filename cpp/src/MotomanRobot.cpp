@@ -350,7 +350,7 @@ robot_result MotomanRobot::HasReachedTarget()
         return result;
     }
 
-    std::cout << "Motion progress: " << progress << "%, Steps remaining: " << stepsRemaining << std::endl;
+    //std::cout << "Motion progress: " << progress << "%, Steps remaining: " << stepsRemaining << std::endl;
 
     result.payload = (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
 

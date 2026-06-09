@@ -6,8 +6,6 @@
 #include <atomic>
 #include <any>
 #include "YMConnect.h"
-#include "status.hpp"
-#include "status.hpp"
 
 struct robot_result
 {
@@ -58,7 +56,7 @@ public:
     robot_result add_point_to_trajectory(const Position& pos);
     robot_result set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
     double get_motion_progress();
-    bool HasReachedTarget();
+    robot_result HasReachedTarget();
 
     bool is_connected() const { return connected; }
 

@@ -46,6 +46,34 @@ class Cobot_Operation_Report:
         if report.overall_status == Cobot_Operation_Status.job_failure:
             self.overall_status = Cobot_Operation_Status.job_failure
 
+    def __str__(self) -> str:
+        lines = []
+        lines.append("=== COBOT OPERATION REPORT ===")
+        lines.append(f"Overall Status: {self.overall_status.name}")
+        lines.append(f"Total Jobs: {len(self.jobs)}")
+        lines.append("")
+
+        for i, (job, result) in enumerate(zip(self.jobs, self.results)):
+            status = "OK" if result.status.is_ok else "FAIL"
+            lines.append(f"[{i}] Job: {job.name}")
+            lines.append(f"    Status: {status}")
+
+            # try to print extra result info safely
+            if hasattr(result, "payload"):
+                lines.append(f"    Payload: {result.payload}")
+
+            if hasattr(result.status, "status_code"):
+                lines.append(f"    Status Code: {result.status.status_code}")
+
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return (
+            f"Cobot_Operation_Report("
+            f"jobs={len(self.jobs)}, "
+            f"results={len(self.results)}, "
+            f"status={self.overall_status.name})"
+        )
 
 GRIPPER_ON = True
 GRIPPER_OFF = False
@@ -96,13 +124,13 @@ class Cobot:
 
         for position in pickup_trajectory:
             movement_report = Cobot_Operation_Report()
-            await movement_report = self.goto(position)
+            movement_report = await self.goto(position)
             pick_and_place_report.add_report(movement_report)
 
         #self._set_gripper(GRIPPER_ON)
 
         movement_report = Cobot_Operation_Report()
-        await movement_report = self.goto(self.goto(self.target))
+        movement_report = await self.goto(self.target)
         pick_and_place_report.add_report(movement_report)
 
 
@@ -131,7 +159,9 @@ class Cobot:
         self.robot.disconnect()
 
     def _set_gripper(self, state: bool):
-        return self.robot.write_general_output_bit(self.gripper_io_group, self.gripper_io_bit, state)
+        gripper_report = Cobot_Operation_Report()
+        gripper_job = 
+        self.robot.write_general_output_bit(self.gripper_io_group, self.gripper_io_bit, state)
     
 
 
