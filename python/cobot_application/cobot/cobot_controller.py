@@ -23,6 +23,7 @@ class Cobot_Controller():
             print("command recived!",flush=True)
 
             for can in command.value:
+                await asyncio.sleep(1)
                 await self.cobot.pick_and_place(can)
 
             print("comand recived!!!",flush=True)

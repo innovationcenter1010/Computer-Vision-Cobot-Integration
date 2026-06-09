@@ -79,7 +79,7 @@ private:
     MoveInterpolationType robot_interpolation_type = MoveInterpolationType::MoveJoint; // Default interpolation type for motions
     CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables
     ControlGroupId default_control_group = ControlGroupId::R1; // Default control group for motions
-    MotionAccelDecel robot_motion_attributes{ 50.0, 50.0 }; // Default to no acceleration/deceleration reduction
-    DOUBLE64 robot_speed = 100.0; // Default speed for motions
+    MotionAccelDecel robot_motion_attributes{ 25, 25 }; // Default to no acceleration/deceleration reduction
+    DOUBLE64 robot_speed = 25; // Default speed for motions
 
 };
