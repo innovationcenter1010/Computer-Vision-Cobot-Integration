@@ -322,6 +322,9 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     robot_result result{};
     result.status = controller->MotionManager->AddPointToTrajectory(motion);
     result.payload = result.status.IsOk();
+
+    PrintActiveAlarms();
+
     return result;
 
 }
@@ -353,6 +356,8 @@ robot_result MotomanRobot::HasReachedTarget()
     //std::cout << "Motion progress: " << progress << "%, Steps remaining: " << stepsRemaining << std::endl;
 
     result.payload = (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
+
+    PrintActiveAlarms();
 
     return result;
 
@@ -406,6 +411,36 @@ robot_result MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPositi
         ioBit);
 
     return robot_result{ st, ioBit };
+}
+
+void MotomanRobot::PrintActiveAlarms()
+{
+    ActiveAlarms activeAlarms;
+
+    StatusInfo status = controller->Faults->GetActiveAlarms(activeAlarms);
+
+    if (status.StatusCode != 0)
+    {
+        std::cerr << "Failed to retrieve active alarms: "
+                  << status << std::endl;
+        return;
+    }
+
+    std::cout << "Number of active alarms: "
+              << activeAlarms.numberOfActiveAlarms
+              << std::endl;
+
+    for (UINT32 i = 0; i < activeAlarms.numberOfActiveAlarms; ++i)
+    {
+        const AlarmData& alarm = activeAlarms.alarms[i];
+
+        std::cout << "Alarm #" << i + 1 << std::endl;
+        std::cout << "  Code    : " << alarm.code << std::endl;
+        std::cout << "  Subcode : " << alarm.subcode << std::endl;
+        std::cout << "  Time    : " << alarm.time << std::endl;
+        std::cout << "  Name    : " << alarm.name << std::endl;
+        std::cout << std::endl;
+    }
 }
 
 

@@ -64,6 +64,8 @@ public:
     robot_result write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
     robot_result read_general_output_bit(UINT16 group, UINT8 bitPosition);
 
+    void PrintActiveAlarms();
+
 
 private:
     std::string ip;
