@@ -77,16 +77,18 @@ function connectWebSocket() {
     };
 }
 
-function sendRobotCommand(command) {
+function sendRobotCommandWithValue(command, commandValue) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
         document.getElementById("robot_command_status").innerText =
             "WebSocket is not connected";
         return;
     }
 
-    socket.send(JSON.stringify({
-        command: command
-    }));
+    const payload = {};
+    payload.command = command;
+    payload.value = commandValue;
+
+    socket.send(JSON.stringify(payload));
 }
 
 connectWebSocket();
