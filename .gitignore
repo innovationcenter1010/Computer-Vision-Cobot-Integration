@@ -40,3 +40,4 @@ env/
 *test.json
 *detections.jpg
 *detections.jpeg
+*log.txt
