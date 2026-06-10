@@ -6,6 +6,15 @@ import time
 from enum import Enum,auto
 from dataclasses import dataclass
 from typing import List
+import copy
+import math
+
+
+
+SENSOR_READ_FREQUENCY = 0.2 #seconds
+SENSOR_READ_ATTEMPTS = 5 
+INTERPOLATION_INVALID_ALARM_CODE = 4684;
+
 
 class Cobot_Job(Enum):
     move = auto()
@@ -13,6 +22,7 @@ class Cobot_Job(Enum):
     disengage_gripper = auto()
     add_trajectory_point = auto()
     reached_target_check = auto()
+    motion_start = auto()
 
 
 class Cobot_Operation_Status(Enum):
@@ -31,6 +41,35 @@ class Sensor_Assert:
     expected: bool
     actual: bool
     passed: bool
+
+@dataclass
+class PositionOffset:
+    x: float = 0.0
+    y: float = 0.0
+    original_z_rotation_deg: float = 0.0
+
+    def is_empty(self):
+        return self.x == 0.0 and self.y == 0.0
+
+    def inverted(self, current_z_rotation_deg: float):
+
+        delta_deg = (
+            current_z_rotation_deg
+            - self.original_z_rotation_deg
+        )
+
+        theta = math.radians(delta_deg)
+
+        inv_x = -self.x
+        inv_y = -self.y
+
+        return PositionOffset(
+            x=inv_x * math.cos(theta) - inv_y * math.sin(theta),
+            y=inv_x * math.sin(theta) + inv_y * math.cos(theta),
+            original_z_rotation_deg=current_z_rotation_deg,
+        )
+    
+
 
 class Cobot_Operation_Report:
 
@@ -97,7 +136,7 @@ class Cobot_Operation_Report:
                 start=1,
             ):
                 try:
-                    status_ok = result.status.is_ok
+                    status_ok = result.status.is_ok()
                 except Exception:
                     status_ok = "UNKNOWN"
 
@@ -184,6 +223,7 @@ class Cobot:
     async def pick_and_place(self, can: OBBDetection):
 
         pick_and_place_report = Cobot_Operation_Report()
+        interpolation_offset = PositionOffset()
 
         tooling_offset_z = self.cobot_configs["tool_head_length_mm"]
         tooling_offset_xy = self.cobot_configs["tool_head_xy_offset"]
@@ -192,15 +232,19 @@ class Cobot:
         cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, -100, 180, 0, 0)
         cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,100, 180, 0, 0)
         cobot_up = motoman_cpp.Position(can.real_x, can.real_y,500, 180, 0, 0)
-        pickup_trajectory = [cobot_address_can_position,cobot_pickup_position,cobot_up]
+
+        pickup_trajectory = [
+            [cobot_address_can_position,None],
+            [cobot_pickup_position,interpolation_offset],
+            [cobot_up,None]]
 
         for position in pickup_trajectory:
-            movement_report = await self.goto(position)
+            movement_report = await self.goto(*position)
             pick_and_place_report.add_report(movement_report)
 
         #self._set_gripper(GRIPPER_ON)
 
-        movement_report = await self.goto(self.target)
+        movement_report = await self.goto(self.target,interpolation_offset)
         pick_and_place_report.add_report(movement_report)
 
 
@@ -210,22 +254,111 @@ class Cobot:
 
         return pick_and_place_report
     
-    async def goto(self,position):
-        last_result = self.robot.add_point_to_trajectory(position)
+    async def goto(self,position,offset: PositionOffset | None = None):
 
         goto_report = Cobot_Operation_Report()
+
+        target_position = copy.deepcopy(position)
+
+        #
+        # If offset contains data,
+        # apply its inverse to the target.
+        #
+        if offset is not None and not offset.is_empty():
+
+            inverted_offset = offset.inverted(
+                target_position.rz
+            )
+
+            target_position.x += inverted_offset.x
+            target_position.y += inverted_offset.y
+
+        last_result = self.robot.add_point_to_trajectory(target_position)
+
         goto_report.add(Cobot_Job.add_trajectory_point,last_result)
 
+        if last_result.status.status_code == 0:
 
-        if (last_result.status.status_code == 0):
-            self.robot.motion_start()
-            while (last_result.status.is_ok and not last_result.payload):
+            last_result = self.robot.motion_start()
+
+            goto_report.add(
+                Cobot_Job.motion_start,
+                last_result
+            )
+
+            if last_result.status.status_code == 0:
+
                 last_result = self.robot.has_reached_target()
-                await asyncio.sleep(0.2)
+
+                while (
+                    not last_result.payload
+                    and last_result.status.status_code == 0
+                ):
+                    await asyncio.sleep(0.2)
+
+                    last_result = (
+                        self.robot.has_reached_target()
+                    )
 
         goto_report.add(Cobot_Job.reached_target_check,last_result)
 
-        return goto_report
+        # Interpolation failure.
+        if (last_result.status.status_code == INTERPOLATION_INVALID_ALARM_CODE):
+
+            generated_offset = (self._generate_interpolation_offset(target_position))
+
+            # Store generated offset if caller
+            # provided an empty offset object.
+            if (offset is not None and offset.is_empty()):
+                offset.x = generated_offset.x
+                offset.y = generated_offset.y
+                offset.original_z_rotation_deg = (
+                    generated_offset.original_z_rotation_deg
+                )
+
+            retry_position = copy.deepcopy(
+                target_position
+            )
+
+            retry_position.x += generated_offset.x
+            retry_position.y += generated_offset.y
+
+            retry_report = await self.goto(retry_position,None)
+
+            goto_report.add_report(retry_report)
+
+            return goto_report
+    
+    async def goto_nearby_position(self, position, offset: PositionOffset):
+        """
+        Creates a nearby target position using the supplied offset
+        and executes a goto on that new position.
+        """
+
+        nearby_position = copy.deepcopy(position)
+
+        nearby_position.x += offset.x
+        nearby_position.y += offset.y
+
+        return await self.goto(nearby_position, offset=None)
+    
+    def _generate_interpolation_offset(
+        self,
+        position,
+        step_mm=50
+        ):
+
+        return PositionOffset(
+            x=-math.copysign(
+                min(step_mm, abs(position.x)),
+                position.x,
+            ),
+            y=-math.copysign(
+                min(step_mm, abs(position.y)),
+                position.y,
+            ),
+            original_z_rotation_deg=position.rz,
+            )
 
     def disconnect(self):
         self.robot.disconnect()
@@ -249,14 +382,16 @@ class Cobot:
         ) -> bool:
 
         actual = False
-        for read_attempt in range (5):
-            actual = self.robot.read_general_output_bit(sensor.group, sensor.bit).payload
-            if(actual == expected):
-                print("sensor assert passed!",flush=True)
-                break
+        
+        for read_attempt in range (SENSOR_READ_ATTEMPTS):
 
-            await asyncio.sleep(1)
-            print("sensor assert failed")
+            last_result = self.robot.read_general_output_bit(sensor.group, sensor.bit).payload
+
+            actual = True
+            
+            if(actual == expected):break
+
+            await asyncio.sleep(SENSOR_READ_FREQUENCY)
         
         report.add_sensor_assert(sensor,expected,actual)
 

@@ -64,8 +64,7 @@ public:
     robot_result write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
     robot_result read_general_output_bit(UINT16 group, UINT8 bitPosition);
 
-    void PrintActiveAlarms();
-
+    ActiveAlarms MotomanRobot::get_active_alarms(StatusInfo st);
 
 private:
     std::string ip;
