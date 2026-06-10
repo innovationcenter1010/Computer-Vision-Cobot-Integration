@@ -320,8 +320,17 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     motion.accuracy = -1;
 
     robot_result result{};
-    result.status = controller->MotionManager->AddPointToTrajectory(motion);
-    result.payload = result.status.IsOk();
+
+    if(!IsPositionValid(motion.position)){
+        result.status.StatusCode = INTERPOLATION_INVALID_ALARM_CODE;
+        result.status.Message = "INTERPOLATION INAVALID";
+    }
+
+    else{
+
+        result.status = controller->MotionManager->AddPointToTrajectory(motion);
+        result.payload = result.status.IsOk();
+    }
 
     //PrintActiveAlarms();
 
@@ -365,6 +374,7 @@ robot_result MotomanRobot::HasReachedTarget()
 
         result.status.StatusCode = INTERPOLATION_INVALID_ALARM_CODE;
         result.status.Message = "INTERPOLATION INVALID";
+        StatusInfo alarms_cleared = controller->Faults->ClearAllFaults();
 
     }
 
@@ -431,6 +441,31 @@ ActiveAlarms MotomanRobot::get_active_alarms(StatusInfo st)
     st = controller->Faults->GetActiveAlarms(activeAlarms);
 
     return activeAlarms;
+}
+
+bool MotomanRobot::IsPositionValid(PositionData& cartesianPos)
+{
+    PositionData converted;
+    PositionData prevJointAngles;
+
+    StatusInfo St = controller->ControlGroup->ReadPositionData(default_control_group,CoordinateType::Pulse,0,0,prevJointAngles);
+
+    StatusInfo status = controller->Kinematics->ConvertPositionFromCartesian(
+        default_control_group,
+        cartesianPos,
+        KinematicConversions::CartesianPosToJointAngle,
+        KinematicType::Delta,
+        prevJointAngles.axisData,
+        converted
+    );
+
+    // If IK failed → invalid position
+    if (status.IsOk() != 0){
+    
+        return false;
+    }
+
+    return true;
 }
 
 

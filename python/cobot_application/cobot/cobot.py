@@ -93,7 +93,8 @@ class Cobot_Operation_Report:
 
     def add_report(self,report: "Cobot_Operation_Report",) -> None:
 
-        self.jobs.extend(report.jobs)
+        if(report.jobs):self.jobs.extend(report.jobs)
+
         self.results.extend(report.results)
         self.sensor_asserts.extend(report.sensor_asserts)
 
@@ -229,8 +230,8 @@ class Cobot:
         tooling_offset_xy = self.cobot_configs["tool_head_xy_offset"]
         compression_offset = self.cobot_configs["tool_head_compression_distance_mm"]
 
-        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, -100, 180, 0, 0)
-        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,100, 180, 0, 0)
+        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 450, 180, 0, 0)
+        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,500, 180, 0, 0)
         cobot_up = motoman_cpp.Position(can.real_x, can.real_y,500, 180, 0, 0)
 
         pickup_trajectory = [
@@ -258,7 +259,7 @@ class Cobot:
 
         goto_report = Cobot_Operation_Report()
 
-        target_position = copy.deepcopy(position)
+        target_position = position
 
         #
         # If offset contains data,
@@ -301,64 +302,58 @@ class Cobot:
                     )
 
         goto_report.add(Cobot_Job.reached_target_check,last_result)
-
-        # Interpolation failure.
-        if (last_result.status.status_code == INTERPOLATION_INVALID_ALARM_CODE):
-
-            generated_offset = (self._generate_interpolation_offset(target_position))
-
-            # Store generated offset if caller
-            # provided an empty offset object.
-            if (offset is not None and offset.is_empty()):
-                offset.x = generated_offset.x
-                offset.y = generated_offset.y
-                offset.original_z_rotation_deg = (
-                    generated_offset.original_z_rotation_deg
-                )
-
-            retry_position = copy.deepcopy(
-                target_position
-            )
-
-            retry_position.x += generated_offset.x
-            retry_position.y += generated_offset.y
-
-            retry_report = await self.goto(retry_position,None)
-
-            goto_report.add_report(retry_report)
-
-            return goto_report
+        
+        return goto_report
     
-    async def goto_nearby_position(self, position, offset: PositionOffset):
-        """
-        Creates a nearby target position using the supplied offset
-        and executes a goto on that new position.
-        """
-
-        nearby_position = copy.deepcopy(position)
-
-        nearby_position.x += offset.x
-        nearby_position.y += offset.y
-
-        return await self.goto(nearby_position, offset=None)
-    
-    def _generate_interpolation_offset(
+    async def add_point_with_offset_recovery(
         self,
-        position,
-        step_mm=50
+        target_position,
+        interpolation_offset: PositionOffset,
+        max_steps: int = 10,
+        step_fraction: int = 100,
         ):
 
-        return PositionOffset(
-            x=-math.copysign(
-                min(step_mm, abs(position.x)),
-                position.x,
-            ),
-            y=-math.copysign(
-                min(step_mm, abs(position.y)),
-                position.y,
-            ),
-            original_z_rotation_deg=position.rz,
-            )
+        report = Cobot_Operation_Report()
+
+        base_x = target_position.x
+        base_y = target_position.y
+
+        # direction toward robot base (0,0)
+        step_x = -base_x / step_fraction
+        step_y = -base_y / step_fraction
+
+        current_pos = target_position.copy()
+
+        for i in range(max_steps + 1):
+
+            result = self.robot.add_point_to_trajectory(current_pos)
+            report.add(Cobot_Job.add_trajectory_point, result)
+
+            status_code = result.status.status_code
+
+            # SUCCESS → return immediately
+            if status_code == 0:
+                return report
+
+            # If NOT interpolation error → stop immediately
+            if status_code != 3:
+                return report
+
+            # LINEAR STEP toward base
+            current_pos = current_pos.copy()
+            current_pos.x += step_x
+            current_pos.y += step_y
+
+            # Optional: apply external offset correction each iteration
+            #if interpolation_offset is not None and not interpolation_offset.is_empty():
+                #inverted = interpolation_offset.inverted(current_pos.rz)
+                #current_pos.x += inverted.x
+                #current_pos.y += inverted.y
+
+            return report
+
+    
+
 
     def disconnect(self):
         self.robot.disconnect()
