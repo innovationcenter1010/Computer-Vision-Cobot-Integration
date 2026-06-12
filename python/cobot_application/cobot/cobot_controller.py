@@ -28,6 +28,7 @@ class Cobot_Controller():
                 r = Cobot_Operation_Report()
                 r = await self.cobot.pick_and_place(can)
                 layer_report.add(r.overall_status)
+                print(r)
 
             print("comand recived!!!",flush=True)
             await asyncio.sleep(1)
@@ -35,9 +36,9 @@ class Cobot_Controller():
 
 class Layer_Report:
     def __init__(self):
-        successes: int = 0
-        failures: int = 0
-        overall: Cobot_Operation_Status = Cobot_Operation_Status.job_success
+        self.successes: int = 0
+        self.failures: int = 0
+        self.overall: Cobot_Operation_Status = Cobot_Operation_Status.job_success
     
     def add(self,status: Cobot_Operation_Status):
         if(status == Cobot_Operation_Status.job_success):

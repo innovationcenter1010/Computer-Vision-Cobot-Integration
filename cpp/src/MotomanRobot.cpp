@@ -289,7 +289,7 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
               << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
 
-    if(abs(pos.x) > 1500 || abs(pos.y) > 1500){
+    if(abs(pos.x) > 1400 || abs(pos.y) > 1400){
 
         return robot_result{StatusInfo{1, "Out of Bounds"}};
 
@@ -324,12 +324,15 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     if(!IsPositionValid(motion.position)){
         result.status.StatusCode = INTERPOLATION_INVALID_ALARM_CODE;
         result.status.Message = "INTERPOLATION INAVALID";
+        std::cout << "invalid";
     }
 
     else{
 
         result.status = controller->MotionManager->AddPointToTrajectory(motion);
         result.payload = result.status.IsOk();
+        std::cout << "valid";
+
     }
 
     //PrintActiveAlarms();
@@ -366,17 +369,17 @@ robot_result MotomanRobot::HasReachedTarget()
 
     result.payload = (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
 
-    StatusInfo active_alarms_status;
-    ActiveAlarms active_alarms = get_active_alarms(active_alarms_status);
+    //StatusInfo active_alarms_status;
+    //ActiveAlarms active_alarms = get_active_alarms(active_alarms_status);
 
     //easy cath for wrong interpolation account
-    if(active_alarms.numberOfActiveAlarms == 1 && active_alarms.alarms[0].code == INTERPOLATION_INVALID_ALARM_CODE){
+    //if(active_alarms.numberOfActiveAlarms == 1 && active_alarms.alarms[0].code == INTERPOLATION_INVALID_ALARM_CODE){
 
-        result.status.StatusCode = INTERPOLATION_INVALID_ALARM_CODE;
-        result.status.Message = "INTERPOLATION INVALID";
-        StatusInfo alarms_cleared = controller->Faults->ClearAllFaults();
+    //    result.status.StatusCode = INTERPOLATION_INVALID_ALARM_CODE;
+    //    result.status.Message = "INTERPOLATION INVALID";
+    //    StatusInfo alarms_cleared = controller->Faults->ClearAllFaults();
 
-    }
+    //}
 
     return result;
 

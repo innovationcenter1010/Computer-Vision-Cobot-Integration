@@ -224,7 +224,7 @@ class Cobot:
         self.gripper_io_bit = 2
 
         #cast the position data from configs.JSO into the position type compatible with the cobot 
-        self.target = motoman_cpp.Position(*(self.cobot_configs["cobot_place_positions"])["place_position_a"])
+        self.targets = (self.cobot_configs["cobot_place_trajectories"])
 
     
 
@@ -237,8 +237,8 @@ class Cobot:
         tooling_offset_xy = self.cobot_configs["tool_head_xy_offset"]
         compression_offset = self.cobot_configs["tool_head_compression_distance_mm"]
 
-        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 450, 180, 0, 0)
-        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,500, 180, 0, 0)
+        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 300, 180, 0, 0)
+        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,600, 180, 0,0)
         cobot_up = motoman_cpp.Position(can.real_x, can.real_y,500, 180, 0, 0)
 
         pickup_trajectory = [
@@ -250,6 +250,8 @@ class Cobot:
             movement_report = await self.goto(*position)
             pick_and_place_report.add_report(movement_report)
 
+        if(pick_and_place_report.results[len(pick_and_place_report.results) -1].status.status_code !=0): return pick_and_place_report
+
         gripper_report = self._set_gripper(GRIPPER_ON)
         pick_and_place_report.add_report(gripper_report)
 
@@ -257,7 +259,7 @@ class Cobot:
         pick_and_place_report.add_report(movement_report)
 
         #move to the check position 
-        movement_report = await self.goto(self.targets["check"],interpolation_offset)
+        movement_report = await self.goto(motoman_cpp.Position(*self.targets["check"]),interpolation_offset)
         pick_and_place_report.add_report(movement_report)
 
         
@@ -273,31 +275,34 @@ class Cobot:
         if(self.last_placed == place_position.left and not right_detection):
             just_placed = place_position.right
             if(divot_detection):
-                place_trajectory = self.target["right"]
+                place_trajectory.append(motoman_cpp.Position(*self.targets["right"][0]))
+                place_trajectory.append(motoman_cpp.Position(*self.targets["right"][1]))
             else:
-                place_trajectory = self.target["right_flip"]
+                place_trajectory.append(motoman_cpp.Position(*self.targets["right_flip"][0]))
+                place_trajectory.append(motoman_cpp.Position(*self.targets["right_flip"][1]))
 
         elif(self.last_placed == place_position.right and not left_detection):
             just_placed = place_position.left
             if(not divot_detection):
-                place_trajectory = self.target["left"]
+                place_trajectory.append(motoman_cpp.Position(*self.targets["left"][0]))
+                place_trajectory.append(motoman_cpp.Position(*self.targets["left"][1]))
             else:
-                place_trajectory = self.target["left_flip"]
+                place_trajectory.append(motoman_cpp.Position(*self.targets["left_flip"][0]))
+                place_trajectory.append(motoman_cpp.Position(*self.targets["left_flip"][1]))
 
+        self.last_placed = just_placed
 
         for position in place_trajectory:
-            movement_report = await self.goto(*position,interpolation_offset)
+            movement_report = await self.goto(position,interpolation_offset)
             pick_and_place_report.add_report(movement_report)
 
         self._set_gripper(GRIPPER_OFF)
 
-        movement_report = await self.goto(self.target,interpolation_offset)
-        pick_and_place_report.add_report(movement_report)
 
 
         #self._set_gripper(GRIPPER_OFF)
 
-        await self._assert_sensor(pick_and_place_report,self.sensors["orientation"],True)
+        await self._assert_sensor(pick_and_place_report,self.sensors["existance_check"],True)
 
         return pick_and_place_report
     
@@ -320,7 +325,7 @@ class Cobot:
 
         last_result = self.add_point_with_offset_recovery(goto_report,target_position,offset)
 
-        goto_report.add(Cobot_Job.add_trajectory_point,last_result)
+        #goto_report.add(Cobot_Job.add_trajectory_point,last_result)
 
         if last_result.status.status_code == 0:
 
@@ -346,7 +351,7 @@ class Cobot:
         
         return goto_report
     
-    async def add_point_with_offset_recovery(
+    def add_point_with_offset_recovery(
         self,
         report: Cobot_Operation_Report,
         target_position,
@@ -373,11 +378,11 @@ class Cobot:
 
             # SUCCESS → return immediately
             if status_code == 0:
-                return report
+                return result
 
             # If NOT interpolation error → stop immediately
             if status_code != 3:
-                return report
+                return result
 
             # LINEAR STEP toward base
             #current_pos = current_pos.copy()
@@ -441,6 +446,11 @@ class Cobot:
         last_result = self.robot.read_general_output_bit(sensor.group, sensor.bit)
         report.add(Cobot_Job.sensor_read,last_result)
         return last_result.payload
+    
+    def trajectory(list):
+        new = []
+        for spot in list:
+            new.append(motoman_cpp.Position(*spot))
         
     
 
