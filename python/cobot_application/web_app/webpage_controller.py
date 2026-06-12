@@ -102,8 +102,8 @@ class Webpage_Controller:
 
         if command == "start_robot":
             return await self.send_command(
-                receiver_ID=sender_ID.cobot_id,
-                message="start_robot",
+                receiver_ID=sender_ID.vision_id,
+                message="start_vision",
                 value=value
             )
 
