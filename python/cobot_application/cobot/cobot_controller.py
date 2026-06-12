@@ -3,7 +3,7 @@ import asyncio
 
 from cobot_application.cobot.cobot import Cobot
 from cobot_application.shared_data import Py_network, Config, sender_ID, P2P_command
-from cobot_application.cobot.calibration import run_cobot_calibration
+from python.cobot_application.cobot.calibration import run_cobot_calibration
 
 #cobot controller class for initializing and looping cobot functionality
 class Cobot_Controller():
