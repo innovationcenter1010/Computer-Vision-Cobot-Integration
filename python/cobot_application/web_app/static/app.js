@@ -75,18 +75,49 @@ function connectWebSocket() {
         console.log("WebSocket disconnected");
         document.getElementById("robot_command_status").innerText = "WebSocket disconnected";
     };
+
+    socket.onerror = function (error) {
+        console.log("WebSocket error:", error);
+        document.getElementById("robot_command_status").innerText = "WebSocket error";
+    };
 }
 
-function sendRobotCommandWithValue(command, commandValue) {
+function sendRobotCommand(command) {
+    console.log("Sending command:", command);
+
     if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.log("WebSocket is not connected");
+
         document.getElementById("robot_command_status").innerText =
             "WebSocket is not connected";
+
         return;
     }
 
-    const payload = {};
-    payload.command = command;
-    payload.value = commandValue;
+    const payload = {
+        command: command
+    };
+
+    socket.send(JSON.stringify(payload));
+}
+
+function sendRobotCommandWithValue(command, commandValue) {
+    console.log("Sending command:", command);
+    console.log("Command value:", commandValue);
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.log("WebSocket is not connected");
+
+        document.getElementById("robot_command_status").innerText =
+            "WebSocket is not connected";
+
+        return;
+    }
+
+    const payload = {
+        command: command,
+        value: commandValue
+    };
 
     socket.send(JSON.stringify(payload));
 }
