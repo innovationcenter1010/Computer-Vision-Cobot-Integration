@@ -1,6 +1,6 @@
 import asyncio
 import time
-import motoman_cpp
+from cobot_application.cobot import motoman_cpp
 from cobot_application.cobot import cobot
 
 async def run_cobot_calibration(cobot:cobot):
