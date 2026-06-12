@@ -1,7 +1,7 @@
 
 import asyncio
 
-from cobot_application.cobot.cobot import Cobot, Cobot_Operation_Report
+from cobot_application.cobot.cobot import Cobot, Cobot_Operation_Report, Cobot_Operation_Status
 from cobot_application.shared_data import Py_network, Config, sender_ID, P2P_command
 
 #cobot controller class for initializing and looping cobot functionality
@@ -20,16 +20,34 @@ class Cobot_Controller():
 
             command = await self.command_queue.get()
 
-            print("command recived!",flush=True)
+
+            layer_report = Layer_Report()
 
             for can in command.value:
                 await asyncio.sleep(1)
                 r = Cobot_Operation_Report()
                 r = await self.cobot.pick_and_place(can)
-                print(r)
+                layer_report.add(r.overall_status)
 
             print("comand recived!!!",flush=True)
             await asyncio.sleep(1)
+
+
+class Layer_Report:
+    def __init__(self):
+        successes: int = 0
+        failures: int = 0
+        overall: Cobot_Operation_Status = Cobot_Operation_Status.job_success
+    
+    def add(self,status: Cobot_Operation_Status):
+        if(status == Cobot_Operation_Status.job_success):
+            self.successes +=1
+        elif(status == Cobot_Operation_Status.job_failure):
+            self.failures += 1
+            self.overall = Cobot_Operation_Status.job_failure
+
+
+    
 
 
 

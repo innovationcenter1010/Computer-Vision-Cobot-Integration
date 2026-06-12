@@ -23,6 +23,11 @@ class Cobot_Job(Enum):
     add_trajectory_point = auto()
     reached_target_check = auto()
     motion_start = auto()
+    sensor_read = auto()
+
+class place_position(Enum):
+    right = auto()
+    left = auto()
 
 
 class Cobot_Operation_Status(Enum):
@@ -73,14 +78,12 @@ class PositionOffset:
 
 class Cobot_Operation_Report:
 
-    def __init__(self):
+    def __init__(self, name = "none"):
         self.results: List[motoman_cpp.robot_result] = []
         self.jobs: List[Cobot_Job] = []
         self.sensor_asserts: List[Sensor_Assert] = []
-
-        self.overall_status: Cobot_Operation_Status = (
-            Cobot_Operation_Status.job_success
-        )
+        self.overall_status: Cobot_Operation_Status = (Cobot_Operation_Status.job_success)
+        self.job_title: str = name
 
     def add(self, job: Cobot_Job, result: motoman_cpp.robot_result) -> None:
 
@@ -199,9 +202,13 @@ class Cobot:
         self.robot = motoman_cpp.MotomanRobot(cobot_configs["cobot_ip"])
 
         self.sensors = {}
-        self.sensors["orientation"] = Cobot_Sensor("orientation",1,3)
-        
-        
+        self.sensors["existance_check"] = Cobot_Sensor("existance_check",1,3)
+        self.sensors["divot_check"] = Cobot_Sensor("divot_check",1,3)
+        self.sensors["right_complete"] = Cobot_Sensor("right_complete",1,3)
+        self.sensors["left_complete"] = Cobot_Sensor("left_complete",1,3)
+
+        self.last_placed: place_position = place_position.left
+    
 
         for attempt in range(5):
             result = self.robot.connect()
@@ -223,7 +230,7 @@ class Cobot:
 
     async def pick_and_place(self, can: OBBDetection):
 
-        pick_and_place_report = Cobot_Operation_Report()
+        pick_and_place_report = Cobot_Operation_Report("PICK AND PLACE REPORT")
         interpolation_offset = PositionOffset()
 
         tooling_offset_z = self.cobot_configs["tool_head_length_mm"]
@@ -236,14 +243,53 @@ class Cobot:
 
         pickup_trajectory = [
             [cobot_address_can_position,None],
-            [cobot_pickup_position,interpolation_offset],
-            [cobot_up,None]]
+            [cobot_pickup_position,interpolation_offset]]
+        
 
         for position in pickup_trajectory:
             movement_report = await self.goto(*position)
             pick_and_place_report.add_report(movement_report)
 
-        #self._set_gripper(GRIPPER_ON)
+        gripper_report = self._set_gripper(GRIPPER_ON)
+        pick_and_place_report.add_report(gripper_report)
+
+        movement_report = await self.goto(cobot_up,None)
+        pick_and_place_report.add_report(movement_report)
+
+        #move to the check position 
+        movement_report = await self.goto(self.targets["check"],interpolation_offset)
+        pick_and_place_report.add_report(movement_report)
+
+        
+        await self._assert_sensor(pick_and_place_report,self.sensors["existance_check"],True)
+        divot_detection = await self._read_sensor(pick_and_place_report,self.sensors["divot_check"])
+
+        right_detection = await self._read_sensor(pick_and_place_report,self.sensors["right_complete"])
+        left_detection = await self._read_sensor(pick_and_place_report,self.sensors["left_complete"])
+
+        place_trajectory = []
+        just_placed: place_position
+
+        if(self.last_placed == place_position.left and not right_detection):
+            just_placed = place_position.right
+            if(divot_detection):
+                place_trajectory = self.target["right"]
+            else:
+                place_trajectory = self.target["right_flip"]
+
+        elif(self.last_placed == place_position.right and not left_detection):
+            just_placed = place_position.left
+            if(not divot_detection):
+                place_trajectory = self.target["left"]
+            else:
+                place_trajectory = self.target["left_flip"]
+
+
+        for position in place_trajectory:
+            movement_report = await self.goto(*position,interpolation_offset)
+            pick_and_place_report.add_report(movement_report)
+
+        self._set_gripper(GRIPPER_OFF)
 
         movement_report = await self.goto(self.target,interpolation_offset)
         pick_and_place_report.add_report(movement_report)
@@ -257,9 +303,9 @@ class Cobot:
     
     async def goto(self,position,offset: PositionOffset | None = None):
 
-        goto_report = Cobot_Operation_Report()
+        goto_report = Cobot_Operation_Report("GOTO REPORT")
 
-        target_position = position
+        target_position = position.copy()
 
         #
         # If offset contains data,
@@ -267,14 +313,12 @@ class Cobot:
         #
         if offset is not None and not offset.is_empty():
 
-            inverted_offset = offset.inverted(
-                target_position.rz
-            )
+            inverted_offset = offset.inverted(target_position.rz)
 
             target_position.x += inverted_offset.x
             target_position.y += inverted_offset.y
 
-        last_result = self.robot.add_point_to_trajectory(target_position)
+        last_result = self.add_point_with_offset_recovery(goto_report,target_position,offset)
 
         goto_report.add(Cobot_Job.add_trajectory_point,last_result)
 
@@ -282,10 +326,7 @@ class Cobot:
 
             last_result = self.robot.motion_start()
 
-            goto_report.add(
-                Cobot_Job.motion_start,
-                last_result
-            )
+            goto_report.add(Cobot_Job.motion_start,last_result)
 
             if last_result.status.status_code == 0:
 
@@ -307,13 +348,12 @@ class Cobot:
     
     async def add_point_with_offset_recovery(
         self,
+        report: Cobot_Operation_Report,
         target_position,
         interpolation_offset: PositionOffset,
         max_steps: int = 10,
         step_fraction: int = 100,
         ):
-
-        report = Cobot_Operation_Report()
 
         base_x = target_position.x
         base_y = target_position.y
@@ -340,7 +380,7 @@ class Cobot:
                 return report
 
             # LINEAR STEP toward base
-            current_pos = current_pos.copy()
+            #current_pos = current_pos.copy()
             current_pos.x += step_x
             current_pos.y += step_y
 
@@ -350,7 +390,7 @@ class Cobot:
                 #current_pos.x += inverted.x
                 #current_pos.y += inverted.y
 
-            return report
+        return result
 
     
 
@@ -369,6 +409,8 @@ class Cobot:
 
         gripper_report.add(gripper_job,result)
 
+        return gripper_report
+
     async def _assert_sensor(
         self,
         report: Cobot_Operation_Report,
@@ -380,17 +422,26 @@ class Cobot:
         
         for read_attempt in range (SENSOR_READ_ATTEMPTS):
 
-            last_result = self.robot.read_general_output_bit(sensor.group, sensor.bit).payload
+            last_result = self.robot.read_general_output_bit(sensor.group, sensor.bit)
 
-            actual = True
+            actual = last_result.payload
             
-            if(actual == expected):break
+            if(actual == expected):
+                break
 
             await asyncio.sleep(SENSOR_READ_FREQUENCY)
         
+        report.add(Cobot_Job.sensor_read,last_result)
         report.add_sensor_assert(sensor,expected,actual)
 
         return actual == expected
+    
+    async def _read_sensor(self,report: Cobot_Operation_Report,sensor: Cobot_Sensor) -> bool:
+
+        last_result = self.robot.read_general_output_bit(sensor.group, sensor.bit)
+        report.add(Cobot_Job.sensor_read,last_result)
+        return last_result.payload
+        
     
 
 
