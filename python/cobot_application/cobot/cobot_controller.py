@@ -34,7 +34,7 @@ class Cobot_Controller():
                     value=command.value
                 )
 
-                print("Calibration result:", result, flash=True)
+                print("Calibration result:", result, flush=True)
                 continue
 
             if command.message == "start_robot":
