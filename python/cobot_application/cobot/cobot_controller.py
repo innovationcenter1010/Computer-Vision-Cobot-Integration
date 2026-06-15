@@ -38,9 +38,9 @@ class Cobot_Controller():
                 continue
 
             if command.message == "pickup":
-                if command.value is None:
-                    print("Pickup command received, but command.value is None", flush=True)
-                    continue
+                #if command.value is None:
+                    #print("Pickup command received, but command.value is None", flush=True)
+                    
 
                 layer_report = Layer_Report()
 
