@@ -13,17 +13,40 @@ class Vision_Controller():
 
     async def loop(self):
         while True:
-            detections = await asyncio.to_thread(
-            run_YOLO,
-            self.configurations.as_dict()["vision_system"]
-            )
+            print("Vision waiting for command...", flush=True)
 
-            layer_command = P2P_command(
-            self.id,
-            "pickup",
-            detections
-            )
+            command = await self.command_queue.get()
 
-            await self.network.cobot_commands.put(layer_command)
+            print("Vision command received", flush=True)
 
-            break
+            try:
+                if command.message=="start_vision":
+                    print("Starting YOLO scan...", flush=True)
+
+                    detections = await asyncio.to_thread(
+                        run_YOLO,
+                        self.configurations.as_dict()["vision_system"]
+                    )
+
+                    print("YOLO scan complete", flush=True)
+                    print("Detections:", detections, flush=True)
+
+
+                    layer_command = P2P_command(
+                        sender_ID=self.id,
+                        receiver_ID=sender_ID.cobot_id,
+                        message="pickup",
+                        value=detections
+                    )
+
+                    await self.network.cobot_commands.put(layer_command)
+
+                else:
+                    print("Unknown vision command:", command.message, flush=True)
+
+            except Exception as e:
+                print("Vision loop error:", e, flush=True)
+
+            await asyncio.sleep(0.1)
+
+            

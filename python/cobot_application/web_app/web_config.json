@@ -1,0 +1,7 @@
+{
+    "robot_ip": "10.10.10.10",
+    "camera_ip": "192.168.1.50",
+    "save_folder": "results",
+    "confidence_threshold": 0.1,
+    "enable_motion": false
+}
