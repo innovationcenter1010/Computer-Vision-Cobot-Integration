@@ -286,9 +286,6 @@ robot_result MotomanRobot::add_point_to_trajectory(Position& pos)
     if (!connected)
         return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
-    if(!IsPositionValid())
-        std::cout << "POSITION INVALID";
-
 
 
     std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
@@ -320,13 +317,14 @@ robot_result MotomanRobot::add_point_to_trajectory(Position& pos)
 
     robot_result result{};
 
-    if(!IsPositionValid(motion.position))
-        std::cout << "POSITION INVALID" << std::endl;
+    //if(!IsPositionValid(motion.position))
+        //std::cout << "POSITION INVALID" << std::endl;
+        //return robot_result{ StatusInfo{ 1, "Not connected" }, false };
+        
 
 
     result.status = controller->MotionManager->AddPointToTrajectory(motion);
     result.payload = result.status.IsOk();
-    std::cout << "valid";
 
 
     //PrintActiveAlarms();

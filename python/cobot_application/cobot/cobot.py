@@ -238,8 +238,8 @@ class Cobot:
         compression_offset = self.cobot_configs["tool_head_compression_distance_mm"]
 
         cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 300, 180, 0, 0)
-        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,600, 180, 0,0)
-        cobot_up = motoman_cpp.Position(can.real_x, can.real_y,500, 180, 0, 0)
+        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,401, 180, 0,0)
+        cobot_up = motoman_cpp.Position(can.real_x, can.real_y,401, 180, 0, 0)
 
         pickup_trajectory = [
             [cobot_address_can_position,None],
@@ -255,8 +255,8 @@ class Cobot:
 
         if(pick_and_place_report.results[len(pick_and_place_report.results) -1].status.status_code !=0): return pick_and_place_report
 
-        #gripper_report = self._set_gripper(GRIPPER_ON)
-        #pick_and_place_report.add_report(gripper_report)
+        gripper_report = self._set_gripper(GRIPPER_ON)
+        pick_and_place_report.add_report(gripper_report)
 
         movement_report = await self.goto(cobot_up,None)
         pick_and_place_report.add_report(movement_report)
@@ -326,8 +326,9 @@ class Cobot:
             target_position.x += inverted_offset.x
             target_position.y += inverted_offset.y
 
-        last_result = self.add_point_with_offset_recovery(goto_report,target_position,offset)
+        #last_result = self.add_point_with_offset_recovery(goto_report,target_position,offset)
 
+        last_result = self.robot.add_point_to_trajectory(position)
         #goto_report.add(Cobot_Job.add_trajectory_point,last_result)
 
         if last_result.status.status_code == 0:
