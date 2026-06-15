@@ -281,21 +281,17 @@ robot_result MotomanRobot::clear_trajectory()
 
 // -------------------- TRAJECTORY --------------------
 
-robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
+robot_result MotomanRobot::add_point_to_trajectory(Position& pos)
 {
     if (!connected)
         return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
+    if(!IsPositionValid())
+        std::cout << "POSITION INVALID";
 
 
-    int y = pos.y;
-    if(abs(pos.x) > 1430 || abs(pos.y) > 1430){
 
-        y = -1430;
-
-    }
-
-    std::cout << "Adding point to trajectory: (" << pos.x << ", " << y << ", " << pos.z << ", "
+    std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
               << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
 
 
@@ -310,7 +306,7 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
 
     // ---------------- Position mapping ----------------
     motion.position.axisData[0] = pos.x;
-    motion.position.axisData[1] = y;
+    motion.position.axisData[1] = pos.y;
     motion.position.axisData[2] = pos.z;
     motion.position.axisData[3] = pos.rx;
     motion.position.axisData[4] = pos.ry;
@@ -324,6 +320,8 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
 
     robot_result result{};
 
+    if(!IsPositionValid(motion.position))
+        std::cout << "POSITION INVALID" << std::endl;
 
 
     result.status = controller->MotionManager->AddPointToTrajectory(motion);
@@ -442,11 +440,10 @@ ActiveAlarms MotomanRobot::get_active_alarms(StatusInfo st)
     return activeAlarms;
 }
 
-bool MotomanRobot::IsPositionValid(PositionData& cartesianPos)
+bool MotomanRobot::IsPositionValid(PositionData cartesianPos)
 {
     PositionData jointAngles;
     PositionData prevJointAngles;
-    PositionData reconstructedCartesian;
 
     // Current robot position used as IK seed
     StatusInfo st = controller->ControlGroup->ReadPositionData(
@@ -457,7 +454,10 @@ bool MotomanRobot::IsPositionValid(PositionData& cartesianPos)
         prevJointAngles);
 
     if (st.IsOk() != 0)
+    {
+        std::cout << "Failed to read current robot position." << std::endl;
         return false;
+    }
 
     // IK: Cartesian -> Joint
     st = controller->Kinematics->ConvertPositionFromCartesian(
@@ -469,49 +469,77 @@ bool MotomanRobot::IsPositionValid(PositionData& cartesianPos)
         jointAngles);
 
     if (st.IsOk() != 0)
-        return false;
-
-    // FK: Joint -> Cartesian
-    st = controller->Kinematics->ConvertPosition(
-        default_control_group,
-        jointAngles,
-        KinematicConversions::JointAngleToCartesianPos,
-        reconstructedCartesian);
-
-    if (st.IsOk() != 0)
-        return false;
-
-    constexpr double tolerancePercent = 1.0;
-
-    const size_t axisCount =
-        std::min(cartesianPos.axisData.size(),
-                 reconstructedCartesian.axisData.size());
-
-    for (size_t i = 0; i < axisCount; ++i)
     {
-        double original = cartesianPos.axisData[i];
-        double converted = reconstructedCartesian.axisData[i];
+        std::cout << "IK conversion failed." << std::endl;
+        return false;
+    }
 
-        // Handle values close to zero
-        if (std::abs(original) < 1e-6)
+    // Joint limits (degrees)
+    struct JointLimit
+    {
+        const char* name;
+        double minDeg;
+        double maxDeg;
+    };
+
+    constexpr double marginDeg = 5.0;
+
+    const JointLimit limits[] =
+    {
+        {"S", -210.0,  210.0},
+        {"L", -180.0,  180.0},
+        {"U",  -67.0,  247.0},
+        {"R", -210.0,  210.0},
+        {"B", -180.0,  180.0},
+        {"T",   -2.0,    2.0}
+    };
+
+    bool passed = true;
+
+    std::cout << "\n=== Joint Angle Validation ===" << std::endl;
+
+    for (size_t i = 0;
+         i < std::min(jointAngles.axisData.size(),
+                      sizeof(limits) / sizeof(limits[0]));
+         ++i)
+    {
+        double angle = jointAngles.axisData[i];
+
+        double distToMin = angle - limits[i].minDeg;
+        double distToMax = limits[i].maxDeg - angle;
+
+        bool axisPass =
+            (distToMin >= marginDeg) &&
+            (distToMax >= marginDeg);
+
+        std::cout
+            << limits[i].name
+            << " = " << angle << " deg"
+            << "  ["
+            << limits[i].minDeg << ", "
+            << limits[i].maxDeg << "]";
+
+        if (axisPass)
         {
-            if (std::abs(converted - original) > 0.01)
-                return false;
+            std::cout << "  PASS";
         }
         else
         {
-            double errorPercent =
-                std::abs(converted - original) /
-                std::abs(original) * 100.0;
-
-            if (errorPercent > tolerancePercent)
-                return false;
+            std::cout << "  FAIL (within "
+                      << marginDeg
+                      << " deg of limit)";
+            passed = false;
         }
+
+        std::cout << std::endl;
     }
 
-    return true;
-}
+    std::cout << "Overall Result: "
+              << (passed ? "PASS" : "FAIL")
+              << std::endl;
 
+    return passed;
+}
 
 
 

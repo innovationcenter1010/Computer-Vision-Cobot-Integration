@@ -53,7 +53,7 @@ public:
     robot_result clear_trajectory();
 
     //trajectory controll
-    robot_result add_point_to_trajectory(const Position& pos);
+    robot_result add_point_to_trajectory(Position& pos);
     robot_result set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
     double get_motion_progress();
     robot_result HasReachedTarget();
@@ -65,7 +65,7 @@ public:
     robot_result read_general_output_bit(UINT16 group, UINT8 bitPosition);
 
     ActiveAlarms get_active_alarms(StatusInfo st);
-    bool IsPositionValid(PositionData& cartesianPos);
+    bool IsPositionValid(PositionData cartesianPos);
 
 
 private:
