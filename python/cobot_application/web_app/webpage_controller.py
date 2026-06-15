@@ -35,17 +35,11 @@ class Webpage_Controller:
         print("Web results path:", self.results_dir, flush=True)
 
     def find_results_dir(self):
-        possible_paths = [
-            self.project_root / "vision_workspace" / "operation" / "results",
-            self.python_dir / "vision_workspace" / "operation" / "results",
-            self.python_dir / "cobot_application" / "vision_system" / "operation" / "results",
-        ]
+        results_path = Path("/app/vision_workspace/operation/results")
 
-        for path in possible_paths:
-            if path.exists():
-                return path
+        print("Using results path:", results_path, flush=True)
 
-        return possible_paths[0]
+        return results_path
 
     async def loop(self):
         print("Starting webpage server...", flush=True)

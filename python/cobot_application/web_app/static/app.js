@@ -125,3 +125,5 @@ function sendRobotCommandWithValue(command, commandValue) {
 connectWebSocket();
 loadConfig();
 loadLatestImage();
+
+setInterval(loadLatestImage, 5000);
