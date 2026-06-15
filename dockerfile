@@ -26,15 +26,6 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# =========================================================
-# Copy python project toml
-# =========================================================
-
-COPY python/pyproject.toml /tmp/python/pyproject.toml
-
-# =========================================================
-# Install Large Dependancies
-# =========================================================
 
 RUN pip3 install --break-system-packages \
     ultralytics \
@@ -44,6 +35,12 @@ RUN pip3 install --break-system-packages \
     fastapi \
     "uvicorn[standard]" \
     jinja2
+
+# =========================================================
+# Copy python project toml
+# =========================================================
+
+COPY python/pyproject.toml /tmp/python/pyproject.toml
 
 
 # ========================================================
