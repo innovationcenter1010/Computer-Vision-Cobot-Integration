@@ -41,7 +41,7 @@
 
     "YOLO_CONFIDENCE": 0.50,
     "YOLO_IOU": 0.4,
-    "YOLO_MAX_DETECTIONS": 10,
+    "YOLO_MAX_DETECTIONS": 20,
     "YOLO_IMAGE_SIZE": 640,
 
     "REMOVE_DUPLICATE_DETECTIONS": true,
@@ -55,10 +55,10 @@
 
     "bin_configs": {
       "image_corners": [
-        [3765,833], 
-        [3977,4131],
-        [518,3987],
-        [846,802]
+        [3744,1178], 
+        [4114,4524],
+        [492,4408],
+        [904,1241]
       ],
       "real_world_corners_mm": [
         [448.22,-1600],
