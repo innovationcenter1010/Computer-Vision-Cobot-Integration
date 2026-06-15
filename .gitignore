@@ -38,3 +38,6 @@ env/
 *test.jpg
 *test.jpeg
 *test.json
+*detections.jpg
+*detections.jpeg
+*log.txt

@@ -3,6 +3,7 @@
 #include <thread>
 #include <chrono>
 #include <future>
+#include <stdexcept>
 //#include <pybind11/pybind11.h>
 //#include <pybind11/stl.h>
 
@@ -12,11 +13,8 @@ using namespace std::chrono_literals;
 const std::chrono::milliseconds MOTION_POLLING_INTERVAL = 50ms;
 const std::chrono::milliseconds CONNECTION_POLLING_INTERVAL = 100ms; 
 
-#include <stdexcept>
-#include <thread>
-#include <chrono>
+UINT32 INTERPOLATION_INVALID_ALARM_CODE = 4684;
 
-using namespace std::chrono_literals;
 
 
 MotomanRobot::MotomanRobot(const std::string& ip)
@@ -251,6 +249,8 @@ robot_result MotomanRobot::motion_start()
     result.status = controller->MotionManager->MotionStart();
     result.payload = result.status.IsOk();
 
+    //PrintActiveAlarms();
+
     return result;
 }
 
@@ -281,19 +281,15 @@ robot_result MotomanRobot::clear_trajectory()
 
 // -------------------- TRAJECTORY --------------------
 
-robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
+robot_result MotomanRobot::add_point_to_trajectory(Position& pos)
 {
     if (!connected)
         return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
+
+
     std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
               << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
-
-    if(abs(pos.x) > 1500 || abs(pos.y) > 1500){
-
-        return robot_result{StatusInfo{1, "Out of Bounds"}};
-
-    }
 
 
     Motion motion;
@@ -317,36 +313,68 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     motion.speed = robot_speed; // or expose later as parameter
     motion.speedType = SpeedType::VJ; // safe default for joint motion style
     motion.attributes = robot_motion_attributes;
-    motion.accuracy = -1;
+    motion.accuracy = 50;
 
     robot_result result{};
+
+    //if(!IsPositionValid(motion.position))
+        //std::cout << "POSITION INVALID" << std::endl;
+        //return robot_result{ StatusInfo{ 1, "Not connected" }, false };
+        
+
+
     result.status = controller->MotionManager->AddPointToTrajectory(motion);
     result.payload = result.status.IsOk();
+
+
+    //PrintActiveAlarms();
+
     return result;
 
 }
 
-bool MotomanRobot::HasReachedTarget()
+robot_result MotomanRobot::HasReachedTarget()
 {
     StatusInfo status;
 
+    robot_result result{};
+
+    result.payload = false;
+
+
     DOUBLE64 progress = controller->MotionManager->GetMotionTargetProgress(ControlGroupId::R1, status);
+    result.status = status;
     if (!status.IsOk())
     {
-        return false;
+        return result;
     }
 
     INT32 stepsRemaining = 0;
-    StatusInfo stepStatus = controller->MotionManager->GetRemainingStepsInTrajectory(stepsRemaining);
-
-    if (!stepStatus.IsOk())
+    status = controller->MotionManager->GetRemainingStepsInTrajectory(stepsRemaining);
+    result.status = status;
+    if (!status.IsOk())
     {
-        return false;
+        return result;
     }
 
     std::cout << "Motion progress: " << progress << "%, Steps remaining: " << stepsRemaining << std::endl;
 
-    return (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
+    result.payload = (progress >= 99.0 && stepsRemaining <=1) || stepsRemaining == 0; // Consider target reached if progress is 95% or more and 1 or fewer steps remain, or if progress is 99% or more regardless of steps remaining (to account for any potential discrepancies in step counting)
+
+    //StatusInfo active_alarms_status;
+    //ActiveAlarms active_alarms = get_active_alarms(active_alarms_status);
+
+    //easy cath for wrong interpolation account
+    //if(active_alarms.numberOfActiveAlarms == 1 && active_alarms.alarms[0].code == INTERPOLATION_INVALID_ALARM_CODE){
+
+    //    result.status.StatusCode = INTERPOLATION_INVALID_ALARM_CODE;
+    //    result.status.Message = "INTERPOLATION INVALID";
+    //    StatusInfo alarms_cleared = controller->Faults->ClearAllFaults();
+
+    //}
+
+    return result;
+
 }
 
 
@@ -391,7 +419,7 @@ robot_result MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPositi
     bool ioBit;
 
     StatusInfo st = controller->Io->ReadBit(
-        IOType::GeneralOutput,
+        IOType::GeneralInput,
         group,
         bitPosition,
         ioBit);
@@ -399,7 +427,117 @@ robot_result MotomanRobot::read_general_output_bit(UINT16 group, UINT8 bitPositi
     return robot_result{ st, ioBit };
 }
 
+ActiveAlarms MotomanRobot::get_active_alarms(StatusInfo st)
+{
+    robot_result result{};
 
+    ActiveAlarms activeAlarms;
+
+    st = controller->Faults->GetActiveAlarms(activeAlarms);
+
+    return activeAlarms;
+}
+
+bool MotomanRobot::IsPositionValid(PositionData cartesianPos)
+{
+    PositionData jointAngles;
+    PositionData prevJointAngles;
+
+    // Current robot position used as IK seed
+    StatusInfo st = controller->ControlGroup->ReadPositionData(
+        default_control_group,
+        CoordinateType::Pulse,
+        0,
+        0,
+        prevJointAngles);
+
+    if (st.IsOk() != 0)
+    {
+        std::cout << "Failed to read current robot position." << std::endl;
+        return false;
+    }
+
+    // IK: Cartesian -> Joint
+    st = controller->Kinematics->ConvertPositionFromCartesian(
+        default_control_group,
+        cartesianPos,
+        KinematicConversions::CartesianPosToJointAngle,
+        KinematicType::Delta,
+        prevJointAngles.axisData,
+        jointAngles);
+
+    if (st.IsOk() != 0)
+    {
+        std::cout << "IK conversion failed." << std::endl;
+        return false;
+    }
+
+    // Joint limits (degrees)
+    struct JointLimit
+    {
+        const char* name;
+        double minDeg;
+        double maxDeg;
+    };
+
+    constexpr double marginDeg = 5.0;
+
+    const JointLimit limits[] =
+    {
+        {"S", -210.0,  210.0},
+        {"L", -180.0,  180.0},
+        {"U",  -67.0,  247.0},
+        {"R", -210.0,  210.0},
+        {"B", -180.0,  180.0},
+        {"T",   -2.0,    2.0}
+    };
+
+    bool passed = true;
+
+    std::cout << "\n=== Joint Angle Validation ===" << std::endl;
+
+    for (size_t i = 0;
+         i < std::min(jointAngles.axisData.size(),
+                      sizeof(limits) / sizeof(limits[0]));
+         ++i)
+    {
+        double angle = jointAngles.axisData[i];
+
+        double distToMin = angle - limits[i].minDeg;
+        double distToMax = limits[i].maxDeg - angle;
+
+        bool axisPass =
+            (distToMin >= marginDeg) &&
+            (distToMax >= marginDeg);
+
+        std::cout
+            << limits[i].name
+            << " = " << angle << " deg"
+            << "  ["
+            << limits[i].minDeg << ", "
+            << limits[i].maxDeg << "]";
+
+        if (axisPass)
+        {
+            std::cout << "  PASS";
+        }
+        else
+        {
+            std::cout << "  FAIL (within "
+                      << marginDeg
+                      << " deg of limit)";
+            passed = false;
+        }
+
+        std::cout << std::endl;
+    }
+
+    std::cout << "Overall Result: "
+              << (passed ? "PASS" : "FAIL")
+              << std::endl;
+
+    return passed;
+}
 
 
 

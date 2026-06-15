@@ -6,8 +6,6 @@
 #include <atomic>
 #include <any>
 #include "YMConnect.h"
-#include "status.hpp"
-#include "status.hpp"
 
 struct robot_result
 {
@@ -55,16 +53,19 @@ public:
     robot_result clear_trajectory();
 
     //trajectory controll
-    robot_result add_point_to_trajectory(const Position& pos);
+    robot_result add_point_to_trajectory(Position& pos);
     robot_result set_motion_profile(DOUBLE64 speed, DOUBLE64 accel, DOUBLE64 decel);
     double get_motion_progress();
-    bool HasReachedTarget();
+    robot_result HasReachedTarget();
 
     bool is_connected() const { return connected; }
 
     robot_result write_io_bit(UINT32 index, bool value);
     robot_result write_general_output_bit(UINT16 group, UINT8 bitPosition, bool ioBit);
     robot_result read_general_output_bit(UINT16 group, UINT8 bitPosition);
+
+    ActiveAlarms get_active_alarms(StatusInfo st);
+    bool IsPositionValid(PositionData cartesianPos);
 
 
 private:
@@ -79,7 +80,7 @@ private:
     MoveInterpolationType robot_interpolation_type = MoveInterpolationType::MoveJoint; // Default interpolation type for motions
     CoordinateType robot_coordinate_type = CoordinateType::BaseCoordinate; // Default coordinate type for position variables
     ControlGroupId default_control_group = ControlGroupId::R1; // Default control group for motions
-    MotionAccelDecel robot_motion_attributes{ 50.0, 50.0 }; // Default to no acceleration/deceleration reduction
-    DOUBLE64 robot_speed = 100.0; // Default speed for motions
+    MotionAccelDecel robot_motion_attributes{ 25, 25 }; // Default to no acceleration/deceleration reduction
+    DOUBLE64 robot_speed = 25; // Default speed for motions
 
 };

@@ -61,7 +61,11 @@ PYBIND11_MODULE(motoman_cpp, m)
         .def_readwrite("z", &Position::z)
         .def_readwrite("rx", &Position::rx)
         .def_readwrite("ry", &Position::ry)
-        .def_readwrite("rz", &Position::rz);
+        .def_readwrite("rz", &Position::rz)
+
+        .def("copy", [](const Position &p) {
+        return Position(p.x, p.y, p.z, p.rx, p.ry, p.rz);
+    });
 
     // ---------------- Robot ----------------
     py::class_<MotomanRobot>(m, "MotomanRobot")
@@ -113,6 +117,5 @@ PYBIND11_MODULE(motoman_cpp, m)
             &MotomanRobot::read_general_output_bit,
             py::arg("group"),
             py::arg("bit_position"));
-
 
 }
