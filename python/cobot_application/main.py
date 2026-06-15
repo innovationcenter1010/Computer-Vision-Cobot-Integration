@@ -15,7 +15,7 @@ async def main():
     application_configurations = Config()
 
     #initialize the controller objects with access to the network and configuration objects
-    cobot = Cobot_Controller(application_network,application_configurations)
+    #cobot = Cobot_Controller(application_network,application_configurations)
     vision = Vision_Controller(application_network,application_configurations)
     #camera = Camera_Controller(application_network,application_configurations)
     webpage = Webpage_Controller(application_network, application_configurations)
@@ -23,11 +23,10 @@ async def main():
 
     #create tasks for each of the fourn packge loops 
     tasks = [
-
        asyncio.create_task(webpage.loop()),     
        #asyncio.create_task(camera.loop()),
        asyncio.create_task(vision.loop()),
-       asyncio.create_task(cobot.loop()),
+       #asyncio.create_task(cobot.loop()),
     ]
 
 

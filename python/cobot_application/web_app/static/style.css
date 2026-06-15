@@ -1,19 +1,42 @@
 body {
+    margin: 0;
     font-family: Arial, sans-serif;
-    margin: 30px;
-    background: #f4f4f4;
+    background: #fce4a3;
 }
 
-h1 {
-    color: #222;
+.page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px;
 }
 
-.section {
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+        "config robot"
+        "image image";
+    gap: 20px;
+    align-items: start;
+}
+
+.card {
     background: white;
+    border-radius: 10px;
     padding: 20px;
-    margin-bottom: 25px;
-    border-radius: 8px;
-    max-width: 700px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.config-card {
+    grid-area: config;
+}
+
+.robot-card {
+    grid-area: robot;
+}
+
+.image-card {
+    grid-area: image;
 }
 
 label {
@@ -24,33 +47,59 @@ label {
 
 input {
     width: 100%;
+    box-sizing: border-box;
     padding: 8px;
     margin-top: 4px;
 }
 
-input[type="checkbox"] {
+.checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-row input {
     width: auto;
 }
 
 button {
-    margin-top: 18px;
-    padding: 10px 18px;
+    padding: 10px 16px;
+    margin: 12px 8px 8px 0;
+    border-radius: 6px;
     cursor: pointer;
+    border: none;
 }
 
-#latest_image {
-    max-width: 650px;
-    border: 1px solid #ccc;
+.start {
+    background: #007a3d;
+    color: white;
 }
 
 .danger {
     background: #b00020;
     color: white;
-    border: none;
 }
 
-.start {
-    background: #008000;
-    color: white;
-    border: none;
+#latest_image {
+    width: 100%;
+    max-height: 520px;
+    object-fit: contain;
+    border: 1px solid #ccc;
+    background: #222;
+}
+
+#save_status,
+#robot_command_status {
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+@media (max-width: 800px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "config"
+            "robot"
+            "image";
+    }
 }
