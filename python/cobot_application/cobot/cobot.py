@@ -52,17 +52,17 @@ class Cobot:
         for position in pickup_trajectory:
             await self.goto(position)
 
-        self._set_gripper(GRIPPER_ON)
+        #self._set_gripper(GRIPPER_ON)
 
         await self.goto(self.target)
 
-        self._set_gripper(GRIPPER_OFF)
+        #self._set_gripper(GRIPPER_OFF)
     
     async def goto(self,position):
-        self.robot.add_point_to_trajectory(position)
-        self.robot.motion_start()
-        while not self.robot.has_reached_target():
-            await asyncio.sleep(0.2)
+        if (self.robot.add_point_to_trajectory(position).status.status_code == 0):
+            self.robot.motion_start()
+            while not self.robot.has_reached_target():
+                await asyncio.sleep(0.2)
 
     def disconnect(self):
         self.robot.disconnect()

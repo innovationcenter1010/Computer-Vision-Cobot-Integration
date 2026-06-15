@@ -289,6 +289,13 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
               << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
 
+    if(abs(pos.x) > 1500 || abs(pos.y) > 1500){
+
+        return robot_result{StatusInfo{1, "Out of Bounds"}};
+
+    }
+
+
     Motion motion;
 
     // ---------------- Core configuration ----------------

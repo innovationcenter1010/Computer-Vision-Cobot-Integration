@@ -35,4 +35,6 @@ env/
 
 # Testser
 
-test_can.json
+*test.jpg
+*test.jpeg
+*test.json
