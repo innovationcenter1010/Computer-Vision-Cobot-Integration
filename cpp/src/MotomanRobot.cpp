@@ -286,14 +286,17 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     if (!connected)
         return robot_result{ StatusInfo{ 1, "Not connected" }, false };
 
-    std::cout << "Adding point to trajectory: (" << pos.x << ", " << pos.y << ", " << pos.z << ", "
-              << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
 
-    if(abs(pos.x) > 1400 || abs(pos.y) > 1400){
 
-        return robot_result{StatusInfo{1, "Out of Bounds"}};
+    int y = pos.y;
+    if(abs(pos.x) > 1430 || abs(pos.y) > 1430){
+
+        y = -1430;
 
     }
+
+    std::cout << "Adding point to trajectory: (" << pos.x << ", " << y << ", " << pos.z << ", "
+              << pos.rx << ", " << pos.ry << ", " << pos.rz << ")" << std::endl;
 
 
     Motion motion;
@@ -307,7 +310,7 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
 
     // ---------------- Position mapping ----------------
     motion.position.axisData[0] = pos.x;
-    motion.position.axisData[1] = pos.y;
+    motion.position.axisData[1] = y;
     motion.position.axisData[2] = pos.z;
     motion.position.axisData[3] = pos.rx;
     motion.position.axisData[4] = pos.ry;
@@ -317,23 +320,16 @@ robot_result MotomanRobot::add_point_to_trajectory(const Position& pos)
     motion.speed = robot_speed; // or expose later as parameter
     motion.speedType = SpeedType::VJ; // safe default for joint motion style
     motion.attributes = robot_motion_attributes;
-    motion.accuracy = -1;
+    motion.accuracy = 50;
 
     robot_result result{};
 
-    if(!IsPositionValid(motion.position)){
-        result.status.StatusCode = INTERPOLATION_INVALID_ALARM_CODE;
-        result.status.Message = "INTERPOLATION INAVALID";
-        std::cout << "invalid";
-    }
 
-    else{
 
-        result.status = controller->MotionManager->AddPointToTrajectory(motion);
-        result.payload = result.status.IsOk();
-        std::cout << "valid";
+    result.status = controller->MotionManager->AddPointToTrajectory(motion);
+    result.payload = result.status.IsOk();
+    std::cout << "valid";
 
-    }
 
     //PrintActiveAlarms();
 
@@ -448,29 +444,73 @@ ActiveAlarms MotomanRobot::get_active_alarms(StatusInfo st)
 
 bool MotomanRobot::IsPositionValid(PositionData& cartesianPos)
 {
-    PositionData converted;
+    PositionData jointAngles;
     PositionData prevJointAngles;
+    PositionData reconstructedCartesian;
 
-    StatusInfo St = controller->ControlGroup->ReadPositionData(default_control_group,CoordinateType::Pulse,0,0,prevJointAngles);
+    // Current robot position used as IK seed
+    StatusInfo st = controller->ControlGroup->ReadPositionData(
+        default_control_group,
+        CoordinateType::Pulse,
+        0,
+        0,
+        prevJointAngles);
 
-    StatusInfo status = controller->Kinematics->ConvertPositionFromCartesian(
+    if (st.IsOk() != 0)
+        return false;
+
+    // IK: Cartesian -> Joint
+    st = controller->Kinematics->ConvertPositionFromCartesian(
         default_control_group,
         cartesianPos,
         KinematicConversions::CartesianPosToJointAngle,
         KinematicType::Delta,
         prevJointAngles.axisData,
-        converted
-    );
+        jointAngles);
 
-    // If IK failed → invalid position
-    if (status.IsOk() != 0){
-    
+    if (st.IsOk() != 0)
         return false;
+
+    // FK: Joint -> Cartesian
+    st = controller->Kinematics->ConvertPosition(
+        default_control_group,
+        jointAngles,
+        KinematicConversions::JointAngleToCartesianPos,
+        reconstructedCartesian);
+
+    if (st.IsOk() != 0)
+        return false;
+
+    constexpr double tolerancePercent = 1.0;
+
+    const size_t axisCount =
+        std::min(cartesianPos.axisData.size(),
+                 reconstructedCartesian.axisData.size());
+
+    for (size_t i = 0; i < axisCount; ++i)
+    {
+        double original = cartesianPos.axisData[i];
+        double converted = reconstructedCartesian.axisData[i];
+
+        // Handle values close to zero
+        if (std::abs(original) < 1e-6)
+        {
+            if (std::abs(converted - original) > 0.01)
+                return false;
+        }
+        else
+        {
+            double errorPercent =
+                std::abs(converted - original) /
+                std::abs(original) * 100.0;
+
+            if (errorPercent > tolerancePercent)
+                return false;
+        }
     }
 
     return true;
 }
-
 
 
 

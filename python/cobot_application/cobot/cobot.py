@@ -246,14 +246,17 @@ class Cobot:
             [cobot_pickup_position,interpolation_offset]]
         
 
+        movement_report = await self.goto(motoman_cpp.Position(*self.targets["check"]),interpolation_offset)
+        pick_and_place_report.add_report(movement_report)
+
         for position in pickup_trajectory:
             movement_report = await self.goto(*position)
             pick_and_place_report.add_report(movement_report)
 
         if(pick_and_place_report.results[len(pick_and_place_report.results) -1].status.status_code !=0): return pick_and_place_report
 
-        gripper_report = self._set_gripper(GRIPPER_ON)
-        pick_and_place_report.add_report(gripper_report)
+        #gripper_report = self._set_gripper(GRIPPER_ON)
+        #pick_and_place_report.add_report(gripper_report)
 
         movement_report = await self.goto(cobot_up,None)
         pick_and_place_report.add_report(movement_report)
