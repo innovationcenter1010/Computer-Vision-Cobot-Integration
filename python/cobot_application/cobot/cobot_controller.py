@@ -19,18 +19,10 @@ class Cobot_Controller():
 
             print("Waiting for command...", flush=True)
 
-            command = await self.command_queue.get()
+            command: P2P_command = await self.command_queue.get()
 
 
-            layer_report = Layer_Report()
-
-            for can in command.value:
-                await asyncio.sleep(1)
-                r = Cobot_Operation_Report()
-                r = await self.cobot.pick_and_place(can)
-                layer_report.add(r.overall_status)
-                print(r)
-
+            if(command.message == "calibrate"):
                 result = await run_cobot_calibration(
                     cobot=self.cobot,
                     configurations=self.configurations,
@@ -39,6 +31,28 @@ class Cobot_Controller():
 
                 print("Calibration result:", result, flush=True)
                 continue
+
+
+            if command.message == "stop_robot":
+                print("Cobot stop requested from webpage", flush=True)
+                continue
+
+            if command.message == "pickup":
+                if command.value is None:
+                    print("Pickup command received, but command.value is None", flush=True)
+                    continue
+
+                layer_report = Layer_Report()
+
+                for can in command.value:
+                    await asyncio.sleep(0.5)
+                    r = Cobot_Operation_Report()
+                    r = await self.cobot.pick_and_place(can)
+                    layer_report.add(r.overall_status)
+                    print(r)
+
+            print("Unknown cobot command:", command.message, flush=True)
+
 
 class Layer_Report:
     def __init__(self):
@@ -52,26 +66,3 @@ class Layer_Report:
         elif(status == Cobot_Operation_Status.job_failure):
             self.failures += 1
             self.overall = Cobot_Operation_Status.job_failure
-
-
-    
-
-
-
-            if command.message == "stop_robot":
-                print("Cobot stop requested from webpage", flush=True)
-                continue
-
-            if command.message == "pickup":
-                if command.value is None:
-                    print("Pickup command received, but command.value is None", flush=True)
-                    continue
-
-                for can in command.value:
-                    await self.cobot.pick_and_place(can)
-
-                print("pickup command complete", flush=True)
-                await asyncio.sleep(1)
-                continue
-
-            print("Unknown cobot command:", command.message, flush=True)
