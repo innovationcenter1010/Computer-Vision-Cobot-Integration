@@ -31,7 +31,10 @@ RUN pip3 install --break-system-packages \
     ultralytics \
     opencv-python-headless \
     numpy \
-    pyyaml
+    pyyaml \
+    fastapi \
+    "uvicorn[standard]" \
+    jinja2
 
 # =========================================================
 # Copy python project toml
@@ -69,6 +72,8 @@ RUN pip3 install --break-system-packages --no-cache-dir -e ./python
 ENV LD_LIBRARY_PATH=/app/third_party/YMConnect:$LD_LIBRARY_PATH
 
 ENV PYTHONPATH=/app/build/python:$PYTHONPATH
+
+EXPOSE 8000
 
 # =========================================================
 # Debugging

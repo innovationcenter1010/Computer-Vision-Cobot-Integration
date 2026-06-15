@@ -8,10 +8,14 @@ services:
 
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
       YOLO_CONFIG_DIR: /tmp/Ultralytics
 
+    ports:
+      - "8000:8000"
     volumes:
       - ./vision_workspace:/app/vision_workspace
+  
 
     command: python3 -m cobot_application.main
 

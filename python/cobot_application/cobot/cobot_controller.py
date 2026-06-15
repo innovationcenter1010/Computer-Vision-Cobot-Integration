@@ -3,6 +3,7 @@ import asyncio
 
 from cobot_application.cobot.cobot import Cobot, Cobot_Operation_Report, Cobot_Operation_Status
 from cobot_application.shared_data import Py_network, Config, sender_ID, P2P_command
+from python.cobot_application.cobot.calibration import run_cobot_calibration
 
 #cobot controller class for initializing and looping cobot functionality
 class Cobot_Controller():
@@ -14,7 +15,7 @@ class Cobot_Controller():
         print("Cobot awake",flush=True)
         
     async def loop(self):
-        while True: 
+        while True:
 
             print("Waiting for command...", flush=True)
 
@@ -30,9 +31,14 @@ class Cobot_Controller():
                 layer_report.add(r.overall_status)
                 print(r)
 
-            print("comand recived!!!",flush=True)
-            await asyncio.sleep(1)
+                result = await run_cobot_calibration(
+                    cobot=self.cobot,
+                    configurations=self.configurations,
+                    value=command.value
+                )
 
+                print("Calibration result:", result, flush=True)
+                continue
 
 class Layer_Report:
     def __init__(self):
@@ -52,5 +58,20 @@ class Layer_Report:
 
 
 
+            if command.message == "stop_robot":
+                print("Cobot stop requested from webpage", flush=True)
+                continue
 
+            if command.message == "pickup":
+                if command.value is None:
+                    print("Pickup command received, but command.value is None", flush=True)
+                    continue
 
+                for can in command.value:
+                    await self.cobot.pick_and_place(can)
+
+                print("pickup command complete", flush=True)
+                await asyncio.sleep(1)
+                continue
+
+            print("Unknown cobot command:", command.message, flush=True)

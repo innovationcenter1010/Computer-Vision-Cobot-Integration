@@ -27,8 +27,9 @@ class Config:
 #only ever put this type of message to a queue
 class P2P_command():
 
-    def __init__(self,sender_ID,message,value):
+    def __init__(self, sender_ID, receiver_ID, message, value=None):
         self.sender_ID = sender_ID
+        self.receiver_ID = receiver_ID
         self.message = message
         self.value = value
 
