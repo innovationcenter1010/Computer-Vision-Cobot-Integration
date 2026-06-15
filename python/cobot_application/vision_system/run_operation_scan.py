@@ -4,6 +4,7 @@ import cv2
 
 from cobot_application.shared_data import Config
 from cobot_application.vision_system.homography import HomographyTranslator
+from cobot_application.vision_system.rotation import calculate_real_rz
 from cobot_application.vision_system.train_yolo_obb import train_yolo_obb
 from cobot_application.vision_system.pathing import(
     order_obb_detections_by_real_position,
@@ -212,6 +213,37 @@ def scan_operation_folder(
 
             detection.real_x = float(real_x)
             detection.real_y = float(real_y)
+
+            pixel_TL = detection.pixel_corners[0]
+            pixel_BL = detection.pixel_corners[3]
+
+            real_TL_x, real_TL_y = translator.translate_point(
+                pixel_TL[0],
+                pixel_TL[1],
+            )
+
+            real_BL_x, real_BL_y = translator.translate_point(
+                pixel_BL[0],
+                pixel_BL[1],
+            )
+
+            detection.real_TL = [
+                float(real_TL_x),
+                float(real_TL_y),
+            ]
+
+            detection.real_BL = [
+                float(real_BL_x),
+                float(real_BL_y),
+            ]
+
+            detection.real_rz = float(
+                calculate_real_rz(
+                    real_TL=detection.real_TL,
+                    real_BL=detection.real_BL,
+                    #real_world_corners_mm=bin_configs["real_world_corners_mm"],
+                )
+            )
 
         detections = order_obb_detections_by_real_position(
              detections=detections,

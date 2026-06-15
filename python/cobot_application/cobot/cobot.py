@@ -237,9 +237,9 @@ class Cobot:
         tooling_offset_xy = self.cobot_configs["tool_head_xy_offset"]
         compression_offset = self.cobot_configs["tool_head_compression_distance_mm"]
 
-        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 300, 180, 0, 0)
-        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,401, 180, 0,0)
-        cobot_up = motoman_cpp.Position(can.real_x, can.real_y,401, 180, 0, 0)
+        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 300, 180, 0, can.real_rz)
+        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,401, 180, 0,can.real_rz)
+        cobot_up = motoman_cpp.Position(can.real_x, can.real_y,401, 180, 0,can.real_rz)
 
         pickup_trajectory = [
             [cobot_address_can_position,None],
