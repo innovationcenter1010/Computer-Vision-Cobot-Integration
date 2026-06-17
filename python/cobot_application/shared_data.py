@@ -45,16 +45,31 @@ class Py_network():
     def __init__(self):
         #command queues for each of the running loops
         #SHOULD ONLY TAKE P2P_MESSAGES
-        self.camera_commands = asyncio.Queue()
-        self.cobot_commands = asyncio.Queue()
-        self.web_commands = asyncio.Queue()
-        self.vision_commands = asyncio.Queue()
+
+  
+
+
+        self.command_queues = {
+            sender_ID.cobot_id: asyncio.Queue(),
+            sender_ID.vision_id: asyncio.Queue(),
+            sender_ID.camera_id: asyncio.Queue(),
+            sender_ID.web_id: asyncio.Queue(),
+        }
+
+        
 
         #states for each module -- ENUMS?
         self.camera_state = "not initialized"
         self.cobot_state = "not initialized"
         self.web_state = "not initialized"
         self.vision_state =  "not initialized"
+
+    def send(self,command: P2P_command):
+
+        if not command.receiver_ID: raise RuntimeError("no reciver id")
+
+        self.command_queues[command.receiver_ID].put(command)
+
 
 
 
