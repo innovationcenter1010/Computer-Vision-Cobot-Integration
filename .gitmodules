@@ -2,3 +2,6 @@
 	path = cpp/third_party/pybind
 	url = https://github.com/pybind/pybind11
 
+[submodule "python/cobot_application/third_party/orbekSDK_v2"]
+	path = python/cobot_application/third_party/orbekSDK_v2
+	url = https://github.com/orbbec/pyorbbecsdk.git
