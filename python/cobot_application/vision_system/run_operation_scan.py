@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import cv2
+import numpy as np
 
-from cobot_application.shared_data import Config
+from python.cobot_application.shared.shared_data import Config
 from cobot_application.vision_system.homography import HomographyTranslator
 from cobot_application.vision_system.rotation import calculate_real_rz
 from cobot_application.vision_system.train_yolo_obb import train_yolo_obb
@@ -136,6 +137,7 @@ def train_if_requested(vision_configs: dict):
 
 
 def scan_operation_folder(
+    image: None | np.array,
     vision_configs: dict,
 ) -> list[OBBDetection]:
     """
@@ -183,11 +185,16 @@ def scan_operation_folder(
         bin_configs["real_world_corners_mm"],
     )
 
-    images = get_image_files(INBOX_DIR)
+    if not image: # case image is none, asume image in inbox path
 
-    if not images:
-        print(f"No operation images found in: {INBOX_DIR}", flush=True)
-        return []
+        images = get_image_files(INBOX_DIR)
+
+        if not images:
+            print(f"No operation images found in: {INBOX_DIR}", flush=True)
+            return []
+        
+    else:# case image is a numpy array
+        images = [image]
 
     all_detections: list[OBBDetection] = []
 
@@ -282,8 +289,9 @@ def scan_operation_folder(
 
 
 def run_YOLO(
+    image: np.array | None,
     vision_configs: dict,
-) -> list[OBBDetection]:
+    ) -> list[OBBDetection]:
     """
     Main YOLO function called by Vision_Controller.
 
