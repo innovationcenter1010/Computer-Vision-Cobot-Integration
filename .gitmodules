@@ -9,3 +9,6 @@
 [submodule "python/cobot_application/third_party/orbec_sdk_v2"]
 	path = python/cobot_application/third_patry/orbec_sdk_v2
 	url = https://github.com/orbbec/OrbbecSDK_v2
+[submodule "python/cobot_application/third_party/orbbec_sdk_v2"]
+	path = python/cobot_application/third_party/orbbec_sdk_v2
+	url = https://github.com/orbbec/OrbbecSDK_v2
