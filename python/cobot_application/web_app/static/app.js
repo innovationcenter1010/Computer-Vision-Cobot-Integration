@@ -1,3 +1,6 @@
+import { VisionCommands, CobotCommands, CameraCommands, WebCommand } from "./commands.js";
+
+
 async function loadConfig() {
     const response = await fetch("/api/config");
     const config = await response.json();
@@ -82,6 +85,53 @@ function connectWebSocket() {
     };
 }
 
+/**
+ * @typedef {"CAMERA" | "COBOT" | "VISION"} ReceiverType
+ */
+
+/**
+ * @param {ReceiverType} receiver
+ */
+function sendCommand(reciver,command,value) {
+    console.log("Sending command:", command);
+
+
+    if(!isValidCommand(reciver,command))
+        console.log("command invalid")
+
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.log("WebSocket is not connected");
+
+        document.getElementById("robot_command_status").innerText =
+            "WebSocket is not connected";
+
+        return;
+    }
+
+    const payload = {
+        command: command
+    };
+
+    socket.send(JSON.stringify(payload));
+}
+
+function isValidCommand(receiver, command) {
+
+    if (!Object.values(Receiver).includes(receiver)) {
+        throw new Error(`Invalid receiver: ${receiver}`);
+    }
+    
+    const commands = ReceiverCommands[receiver];
+
+    if (!commands) {
+        return false;
+    }
+
+    return Object.values(commands).includes(command);
+}
+
+//
 function sendRobotCommand(command) {
     console.log("Sending command:", command);
 

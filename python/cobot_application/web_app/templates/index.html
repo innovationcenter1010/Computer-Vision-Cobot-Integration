@@ -38,15 +38,15 @@
             <section class="card robot-card">
                 <h2>Robot Commands</h2>
 
-                <button type="button" onclick="sendRobotCommand('start_robot')" class="start">
+                <button type="button" onclick="sendCommand(Reciver.COBOT,CobotCommands.START)" class="start">
                     Start
                 </button>
 
-                <button type="button" onclick="sendRobotCommand('calibrate_robot')" class="start">
+                <button type="button" onclick="sendCommand(Reciver.COBOT,CobotCommands.CALIBRATE)" class="start">
                     Calibrate
                 </button>
 
-                <button type="button" onclick="sendRobotCommand('stop_robot')" class="danger">
+                <button type="button" onclick="sendCommand(Reciver.COBOT,CobotCommands.STOP)" class="danger">
                     Stop
                 </button>
 

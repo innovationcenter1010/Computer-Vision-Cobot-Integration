@@ -1,14 +1,14 @@
 import asyncio
-from python.cobot_application.shared_data import Py_network, Config, sender_ID, P2P_command, vision_commands
+from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, vision_commands
 from cobot_application.vision_system.run_operation_scan import run_YOLO
 
 
 class Vision_Controller():
     def __init__(self,network: Py_network,configurations):
         self.network = network
-        self.command_queue = network.vision_commands
+        self.id = package_ID.vision_id
+        self.command_queue = network.command_queues[self.id]
         self.configurations = configurations
-        self.id = sender_ID.vision_id
 
         self.command_map = {
 
@@ -51,7 +51,7 @@ class Vision_Controller():
 
         layer_command = P2P_command(
             sender_ID=self.id,
-            receiver_ID=sender_ID.cobot_id,
+            receiver_ID=package_ID.cobot_id,
             message="pickup",
             value=detections
         )

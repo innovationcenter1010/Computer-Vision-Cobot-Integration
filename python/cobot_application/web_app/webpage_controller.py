@@ -7,15 +7,92 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from cobot_application.shared_data import P2P_command, sender_ID
+from python.cobot_application.shared_data import P2P_command, package_ID, Py_network, COMMAND_REGISTRY
+
+
+
+#-------- maps for type conversions from js ----------
+
+receiver_map = {
+    "COBOT": package_ID.cobot_id,
+    "VISION": package_ID.vision_id,
+    "CAMERA": package_ID.camera_id,
+}
+
+COMMAND_TRANSLATOR = {
+    package_ID.vision_id: {
+        "detect": COMMAND_REGISTRY[package_ID.vision_id].detect,
+    },
+
+    package_ID.cobot_id: {
+        "pickup": COMMAND_REGISTRY[package_ID.cobot_id].pick_and_place,
+        "start": COMMAND_REGISTRY[package_ID.cobot_id].start,
+        "calibrate": COMMAND_REGISTRY[package_ID.cobot_id].calibrate,
+        "stop": COMMAND_REGISTRY[package_ID.cobot_id].stop,
+    },
+
+    package_ID.camera_id: {
+        "snapshot": COMMAND_REGISTRY[package_ID.camera_id].snapshot,
+    },
+
+}
+
+#decodes strings from js into enum values in python 
+def decode_command(receiver_id: str, command_str: str):
+
+    try:
+        receiver = receiver_map[receiver_id]
+    except KeyError:
+        raise ValueError(
+            f"Invalid receiver '{receiver_id}'"
+        )
+
+
+    try:
+        command_enum = COMMAND_TRANSLATOR[receiver][command_str]
+    except KeyError:
+        raise ValueError(
+            f"Invalid command '{command_str}' for receiver '{receiver_id}'"
+        )
+
+    return receiver, command_enum
+
+#parses the payload into a number is it matches
+def parse_payload(value):
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        return value
+
+    if isinstance(value, str):
+        value = value.strip()
+
+        # try int first
+        try:
+            return int(value)
+        except ValueError:
+            pass
+
+        # then float
+        try:
+            return float(value)
+        except ValueError:
+            pass
+
+    # fallback: return original if it can't be parsed
+    return value
+
+# -------------------- actual controller --------------------------
 
 
 class Webpage_Controller:
-    def __init__(self, network, configurations):
+    def __init__(self, network: Py_network, configurations):
+
+        self.id = package_ID.web_id
         self.network = network
         self.configurations = configurations
-
-        self.id = sender_ID.web_id
+        self.command_queue = network.command_queues[self.id]
 
         self.base_dir = Path(__file__).resolve().parent
         self.python_dir = self.base_dir.parent
@@ -54,78 +131,20 @@ class Webpage_Controller:
         server = uvicorn.Server(config)
         await server.serve()
 
-    async def send_command(self, receiver_ID, message, value=None):
-        print("WebpageController received command request", flush=True)
-        print("Receiver:", receiver_ID, flush=True)
-        print("Message:", message, flush=True)
-        print("Value:", value, flush=True)
+    async def handle_web_command(self, reciver: str,command: str,payload: str):
 
-        command = P2P_command(
+        reciver_id, command_id = decode_command(reciver,command)
+        parsed_payload = parse_payload(parse_payload)
+
+        outgoing_command = P2P_command(
             sender_ID=self.id,
-            receiver_ID=receiver_ID,
-            message=message,
-            value=value
+            receiver_ID=reciver_id
+            command=command_id,
+            payload=parsed_payload
         )
 
-        if receiver_ID == sender_ID.cobot_id:
-            print("Putting command into cobot queue", flush=True)
-            await self.network.cobot_commands.put(command)
-            return {"ok": True, "message": f"Sent '{message}' to cobot"}
-
-        if receiver_ID == sender_ID.vision_id:
-            print("Putting command into vision queue", flush=True)
-            await self.network.vision_commands.put(command)
-            return {"ok": True, "message": f"Sent '{message}' to vision system"}
-
-        if receiver_ID == sender_ID.camera_id:
-            print("Putting command into camera queue", flush=True)
-            await self.network.camera_commands.put(command)
-            return {"ok": True, "message": f"Sent '{message}' to camera"}
-
-        return {"ok": False, "message": "Unknown receiver ID"}
-
-    async def handle_web_command(self, command, value=None):
-        print("Web command received:", command, flush=True)
-
-        if command == "stop_robot":
-            return await self.send_command(
-                receiver_ID=sender_ID.cobot_id,
-                message="stop_robot",
-                value=value
-            )
-
-        if command == "start_robot":
-            return await self.send_command(
-                receiver_ID=sender_ID.vision_id,
-                message="start_vision",
-                value=value
-            )
-
-        if command == "calibrate_robot":
-            return await self.send_command(
-                receiver_ID=sender_ID.cobot_id,
-                message="calibrate_robot",
-                value=value
-            )
-
-        if command == "capture_image":
-            return await self.send_command(
-                receiver_ID=sender_ID.camera_id,
-                message="capture_image",
-                value=value
-            )
-
-        if command == "run_detection":
-            return await self.send_command(
-                receiver_ID=sender_ID.vision_id,
-                message="run_detection",
-                value=value
-            )
-
-        return {
-            "ok": False,
-            "message": f"Unknown command: {command}"
-        }
+        await self.network.send(outgoing_command)
+        
 
     def setup_routes(self):
         self.app.mount(
@@ -198,10 +217,12 @@ class Webpage_Controller:
                     data = await websocket.receive_json()
                     print("WebSocket data:", data, flush=True)
 
+                    reciver = data.get("reciver")
                     command = data.get("command")
-                    value = data.get("value")
+                    payload = data.get("payload")
 
-                    result = await self.handle_web_command(command, value)
+
+                    result = await self.handle_web_command(reciver,command,payload)
 
                     await websocket.send_json({
                         "type": "command_result",

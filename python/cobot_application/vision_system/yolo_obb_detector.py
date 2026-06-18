@@ -49,7 +49,7 @@ class YoloOBBDetector:
 
     def detect(
         self,
-        image: np.array | Path,
+        image: np.ndarray | Path | str,
         save_visual: bool = False,
         visual_project_dir: str | Path | None = None,
         visual_name: str | None = None,

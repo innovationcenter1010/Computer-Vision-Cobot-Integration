@@ -6,9 +6,10 @@ from python.cobot_application.shared_data import Py_network, Config, package_ID,
 
 #cobot controller class for initializing and looping cobot functionality
 class Cobot_Controller():
-    def __init__(self,network,configurations):
+    def __init__(self,network: Py_network,configurations):
         self.network = network #accet to the application network
-        self.command_queue = network.cobot_commands #access to its owncommand queue
+        self.id = package_ID.cobot_id
+        self.command_queue = network.command_queues[self.id] #access to its owncommand queue
         self.configurations = configurations # access to the global configurations
         self.cobot = Cobot((configurations.as_dict())["cobot_configs"]) #construct a cobot object with a the settings from the config
 

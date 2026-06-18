@@ -21,20 +21,7 @@ class Config:
         """Optional: update config at runtime (in memory only)."""
         self.data.update(new_data)
 
-#message class for easy communication between packages
-#only ever put this type of message to a queue
-class P2P_command():
 
-    def __init__(self, sender_ID: package_ID, 
-                 receiver_ID: package_ID, 
-                 message: vision_commands | cobot_commands | camera_commands | web_commands, 
-                 value=None):
-        
-
-        self.sender_ID = sender_ID
-        self.receiver_ID = receiver_ID
-        self.message = message
-        self.value = value
 
 class package_ID(Enum):
     cobot_id = auto()
@@ -48,6 +35,9 @@ class vision_commands(Enum):
 
 class cobot_commands(Enum):
     pick_and_place = auto()
+    start = auto()
+    calibrate = auto()
+    stop = auto()
 
 class camera_commands(Enum):
     snapshot = auto()
@@ -55,8 +45,27 @@ class camera_commands(Enum):
 class web_commands(Enum):
     refresh = auto()
 
+COMMAND_REGISTRY = {
+    package_ID.vision_id: vision_commands,
+    package_ID.cobot_id: cobot_commands,
+    package_ID.camera_id: camera_commands,
+    package_ID.web_id: web_commands,
+}
 
 
+#message class for sending commabds between modules
+class P2P_command():
+
+    def __init__(self, sender_ID: package_ID, 
+                 receiver_ID: package_ID, 
+                 message: vision_commands | cobot_commands | camera_commands | web_commands, 
+                 value=None):
+        
+
+        self.sender_ID = sender_ID
+        self.receiver_ID = receiver_ID
+        self.message = message
+        self.value = value
 
         
 #network for easy communication between controll loops
@@ -66,8 +75,6 @@ class Py_network():
         #command queues for each of the running loops
         #SHOULD ONLY TAKE P2P_MESSAGES
 
-  
-
 
         self.command_queues = {
             package_ID.cobot_id: asyncio.Queue(),
@@ -76,8 +83,7 @@ class Py_network():
             package_ID.web_id: asyncio.Queue(),
         }
 
-        
-
+    
         #states for each module -- ENUMS?
         self.camera_state = "not initialized"
         self.cobot_state = "not initialized"

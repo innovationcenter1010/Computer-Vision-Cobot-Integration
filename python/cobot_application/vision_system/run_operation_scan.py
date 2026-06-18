@@ -3,7 +3,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from python.cobot_application.shared.shared_data import Config
+from python.cobot_application.shared_data import Config
 from cobot_application.vision_system.homography import HomographyTranslator
 from cobot_application.vision_system.rotation import calculate_real_rz
 from cobot_application.vision_system.train_yolo_obb import train_yolo_obb
@@ -137,7 +137,7 @@ def train_if_requested(vision_configs: dict):
 
 
 def scan_operation_folder(
-    image: None | np.array,
+    image: None | np.ndarray,
     vision_configs: dict,
 ) -> list[OBBDetection]:
     """
@@ -289,7 +289,7 @@ def scan_operation_folder(
 
 
 def run_YOLO(
-    image: np.array | None,
+    image: np.ndarray | None,
     vision_configs: dict,
     ) -> list[OBBDetection]:
     """
