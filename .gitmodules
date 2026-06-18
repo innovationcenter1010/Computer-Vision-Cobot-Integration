@@ -1,14 +1,6 @@
 [submodule "cpp/third_party/pybind"]
 	path = cpp/third_party/pybind
 	url = https://github.com/pybind/pybind11
-
 [submodule "python/cobot_application/third_party/orbbec_sdk_v2_python"]
 	path = python/cobot_application/third_party/orbbec_sdk_v2_python
 	url = https://github.com/orbbec/pyorbbecsdk.git
-
-[submodule "python/cobot_application/third_party/orbec_sdk_v2"]
-	path = python/cobot_application/third_patry/orbec_sdk_v2
-	url = https://github.com/orbbec/OrbbecSDK_v2
-[submodule "python/cobot_application/third_party/orbbec_sdk_v2"]
-	path = python/cobot_application/third_party/orbbec_sdk_v2
-	url = https://github.com/orbbec/OrbbecSDK_v2
