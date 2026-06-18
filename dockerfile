@@ -36,6 +36,7 @@ RUN pip3 install --break-system-packages \
     "uvicorn[standard]" \
     jinja2
 
+
 # =========================================================
 # Copy python project toml
 # =========================================================
@@ -48,6 +49,21 @@ COPY python/pyproject.toml /tmp/python/pyproject.toml
 # ========================================================
 
 COPY . /app
+
+RUN git clone --recursive https://github.com/orbbec/OrbbecSDK_v2.git \
+    /app/python/cobot_application/third_party/orbekSDK_v2
+
+RUN cd /app/python/cobot_application/third_party/orbekSDK_v2 && \
+    mkdir -p build && \
+    cd build && \
+    cmake .. && \
+    make -j$(nproc)
+
+# Optional debug check
+RUN find /app/python/cobot_application/third_party/orbekSDK_v2 -type d -name lib
+
+# Install Python wrapper
+RUN pip3 install -e /app/python/cobot_application/third_party/orbekSDK_v2
 
 RUN pip3 install --break-system-packages -e ./python
 

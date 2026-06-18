@@ -1,7 +1,7 @@
 import asyncio
 
 from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, camera_commands
-from python.cobot_application.camera import OrbecCamera, orbec_snapshot 
+from python.cobot_application.camera.camera import OrbecCamera, orbec_snapshot 
 
 class Camera_Controller():
     def __init__(self,network: Py_network,configurations):
@@ -19,8 +19,6 @@ class Camera_Controller():
             camera_commands.snapshot: self.snapshot
 
         }
-
-
 
         print("camera awake",flush=True)
 
@@ -42,7 +40,7 @@ class Camera_Controller():
 
     async def snapshot(self, command):
             
-            snapshot = await self.camera.get_snapshot()
+            snapshot: orbec_snapshot = await self.camera.get_snapshot()
             
 
             snapshot_command = P2P_command(
