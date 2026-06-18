@@ -54,6 +54,15 @@ class YoloOBBDetector:
         visual_project_dir: str | Path | None = None,
         visual_name: str | None = None,
     ) -> list[OBBDetection]:
+        
+        predict_args = {
+            "imgsz": self.imgsz,
+            "conf": self.conf,
+            "iou": self.iou,
+            "max_det": self.max_det,
+            "save": save_visual,
+            "verbose": False,
+        }
 
 
         #------------ image path handling --------------
@@ -74,16 +83,7 @@ class YoloOBBDetector:
             raise TypeError("Input must be image path or numpy array")
 
 
-        #
-
-        predict_args = {
-            "imgsz": self.imgsz,
-            "conf": self.conf,
-            "iou": self.iou,
-            "max_det": self.max_det,
-            "save": save_visual,
-            "verbose": False,
-        }
+    
 
         #add output directories
         if save_visual and visual_project_dir is not None:

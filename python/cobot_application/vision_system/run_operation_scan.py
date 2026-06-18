@@ -185,7 +185,7 @@ def scan_operation_folder(
         bin_configs["real_world_corners_mm"],
     )
 
-    if not image: # case image is none, asume image in inbox path
+    if image is None: # case image is none, asume image in inbox path
 
         images = get_image_files(INBOX_DIR)
 
@@ -202,7 +202,7 @@ def scan_operation_folder(
         print(f"Scanning: {image_path.name}", flush=True)
 
         detections = detector.detect(
-            image_path=image_path,
+            image=image_path,
             save_visual=False,
         )
 
@@ -303,7 +303,7 @@ def run_YOLO(
         list of OBBDetection can objects.
     """
 
-    detections = scan_operation_folder(vision_configs)
+    detections = scan_operation_folder(None,vision_configs)
 
     print(f"Total YOLO detections returned: {len(detections)}", flush=True)
 

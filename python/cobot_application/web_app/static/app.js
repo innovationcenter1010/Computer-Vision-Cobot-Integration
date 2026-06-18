@@ -179,6 +179,12 @@ function sendRobotCommandWithValue(command, commandValue) {
 
 */
 
+window.sendCommand = sendCommand;
+window.Receiver = Receiver;
+window.VisionCommands = VisionCommands;
+window.CobotCommands = CobotCommands;
+window.CameraCommands = CameraCommands;
+
 connectWebSocket();
 loadConfig();
 loadLatestImage();

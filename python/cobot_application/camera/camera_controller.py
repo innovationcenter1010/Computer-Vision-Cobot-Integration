@@ -7,7 +7,7 @@ class Camera_Controller():
     def __init__(self,network: Py_network,configurations):
         self.network = network
         self.id = package_ID.camera_id
-        self.command_queue = network.command_queues[self.id]
+        self.command_queue = network.command_queues[self.id.value]
         self.configurations = configurations
 
         self.camera = OrbecCamera()

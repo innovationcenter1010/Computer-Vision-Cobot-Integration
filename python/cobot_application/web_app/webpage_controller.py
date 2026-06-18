@@ -20,25 +20,32 @@ receiver_map = {
 }
 
 COMMAND_TRANSLATOR = {
-    package_ID.vision_id: {
-        "detect": COMMAND_REGISTRY[package_ID.vision_id].detect,
+    package_ID.vision_id.value: {
+        "detect": COMMAND_REGISTRY[package_ID.vision_id.value].detect,
     },
 
-    package_ID.cobot_id: {
-        "pickup": COMMAND_REGISTRY[package_ID.cobot_id].pick_and_place,
-        "start": COMMAND_REGISTRY[package_ID.cobot_id].start,
-        "calibrate": COMMAND_REGISTRY[package_ID.cobot_id].calibrate,
-        "stop": COMMAND_REGISTRY[package_ID.cobot_id].stop,
+    package_ID.cobot_id.value: {
+        "pickup": COMMAND_REGISTRY[package_ID.cobot_id.value].pick_layer,
+        "start": COMMAND_REGISTRY[package_ID.cobot_id.value].start,
+        "calibrate": COMMAND_REGISTRY[package_ID.cobot_id.value].calibrate,
+        "stop": COMMAND_REGISTRY[package_ID.cobot_id.value].stop,
     },
 
-    package_ID.camera_id: {
-        "snapshot": COMMAND_REGISTRY[package_ID.camera_id].snapshot,
+    package_ID.camera_id.value: {
+        "snapshot": COMMAND_REGISTRY[package_ID.camera_id.value].snapshot,
     },
 
 }
 
 #decodes strings from js into enum values in python 
 def decode_command(receiver_id: str, command_str: str):
+
+    #print("receiver.value =", receiver.value,flush=True)
+    #print("registry keys =", COMMAND_TRANSLATOR.keys(),flush=True)
+    #print("command =", command_str,flush=True)
+
+    receiver = None
+    command_enum =None
 
     try:
         receiver = receiver_map[receiver_id]
@@ -49,7 +56,7 @@ def decode_command(receiver_id: str, command_str: str):
 
 
     try:
-        command_enum = COMMAND_TRANSLATOR[receiver][command_str]
+        command_enum = COMMAND_TRANSLATOR[receiver.value][command_str]
     except KeyError:
         raise ValueError(
             f"Invalid command '{command_str}' for receiver '{receiver_id}'"
@@ -92,7 +99,7 @@ class Webpage_Controller:
         self.id = package_ID.web_id
         self.network = network
         self.configurations = configurations
-        self.command_queue = network.command_queues[self.id]
+        self.command_queue = network.command_queues[self.id.value]
 
         self.base_dir = Path(__file__).resolve().parent
         self.python_dir = self.base_dir.parent
@@ -139,9 +146,11 @@ class Webpage_Controller:
         outgoing_command = P2P_command(
             sender_ID=self.id,
             receiver_ID=receiver_id,
-            command=command_id,
-            payload=parsed_payload
+            message=command_id,
+            value=parsed_payload
         )
+
+        await self.network.send(outgoing_command)
 
 
         return {"result": None,
@@ -223,10 +232,13 @@ class Webpage_Controller:
                     command = data.get("command")
                     payload = data.get("payload")
 
+                    print("handling", data,flush=True)
 
                     try:
                         result = await self.handle_web_command(receiver, command, payload)
+                        print(data,"done", flush=True)
                     except Exception as e:
+                        print("WEB COMMAND ERROR:", e)
                         result = {"result": str(e),
                       "message": "websocket command failed"}
 

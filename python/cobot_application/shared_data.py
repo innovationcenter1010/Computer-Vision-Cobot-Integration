@@ -34,7 +34,7 @@ class vision_commands(Enum):
     detect = auto()
 
 class cobot_commands(Enum):
-    pick_and_place = auto()
+    pick_layer = auto()
     start = auto()
     calibrate = auto()
     stop = auto()
@@ -46,10 +46,10 @@ class web_commands(Enum):
     refresh = auto()
 
 COMMAND_REGISTRY = {
-    package_ID.vision_id: vision_commands,
-    package_ID.cobot_id: cobot_commands,
-    package_ID.camera_id: camera_commands,
-    package_ID.web_id: web_commands,
+    package_ID.vision_id.value: vision_commands,
+    package_ID.cobot_id.value: cobot_commands,
+    package_ID.camera_id.value: camera_commands,
+    package_ID.web_id.value: web_commands,
 }
 
 
@@ -77,11 +77,12 @@ class Py_network():
 
 
         self.command_queues = {
-            package_ID.cobot_id: asyncio.Queue(),
-            package_ID.vision_id: asyncio.Queue(),
-            package_ID.camera_id: asyncio.Queue(),
-            package_ID.web_id: asyncio.Queue(),
+            package_ID.cobot_id.value: asyncio.Queue(),
+            package_ID.vision_id.value: asyncio.Queue(),
+            package_ID.camera_id.value: asyncio.Queue(),
+            package_ID.web_id.value: asyncio.Queue(),
         }
+
 
     
         #states for each module -- ENUMS?
@@ -94,7 +95,8 @@ class Py_network():
 
         if not command.receiver_ID: raise RuntimeError("no reciver id")
 
-        self.command_queues[command.receiver_ID].put(command)
+        print("sending command",flush=True)
+        await self.command_queues[command.receiver_ID.value].put(command)
 
 
 

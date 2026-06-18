@@ -22,7 +22,7 @@ export const Receiver = Object.freeze({
     VISION: "VISION"
 });
 
-const ReceiverCommands = Object.freeze({
+export const ReceiverCommands = Object.freeze({
     [Receiver.CAMERA]: CameraCommands,
     [Receiver.COBOT]: CobotCommands,
     [Receiver.VISION]: VisionCommands,

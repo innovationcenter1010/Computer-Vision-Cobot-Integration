@@ -9,7 +9,8 @@ class Cobot_Controller():
     def __init__(self,network: Py_network,configurations):
         self.network = network #accet to the application network
         self.id = package_ID.cobot_id
-        self.command_queue = network.command_queues[self.id] #access to its owncommand queue
+        print("whats going on",self.id in network.command_queues,flush=True)
+        self.command_queue = network.command_queues[self.id.value] #access to its owncommand queue
         self.configurations = configurations # access to the global configurations
         self.cobot = Cobot((configurations.as_dict())["cobot_configs"]) #construct a cobot object with a the settings from the config
 
