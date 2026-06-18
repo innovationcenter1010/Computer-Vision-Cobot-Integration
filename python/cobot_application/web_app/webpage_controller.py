@@ -131,19 +131,21 @@ class Webpage_Controller:
         server = uvicorn.Server(config)
         await server.serve()
 
-    async def handle_web_command(self, reciver: str,command: str,payload: str):
+    async def handle_web_command(self, receiver: str,command: str,payload: str):
 
-        reciver_id, command_id = decode_command(reciver,command)
-        parsed_payload = parse_payload(parse_payload)
+        receiver_id, command_id = decode_command(receiver,command)
+        parsed_payload = parse_payload(payload)
 
         outgoing_command = P2P_command(
             sender_ID=self.id,
-            receiver_ID=reciver_id
+            receiver_ID=receiver_id,
             command=command_id,
             payload=parsed_payload
         )
 
-        await self.network.send(outgoing_command)
+
+        return {"result": None,
+                "message": command}
         
 
     def setup_routes(self):
@@ -217,12 +219,16 @@ class Webpage_Controller:
                     data = await websocket.receive_json()
                     print("WebSocket data:", data, flush=True)
 
-                    reciver = data.get("reciver")
+                    receiver = data.get("receiver")
                     command = data.get("command")
                     payload = data.get("payload")
 
 
-                    result = await self.handle_web_command(reciver,command,payload)
+                    try:
+                        result = await self.handle_web_command(receiver, command, payload)
+                    except Exception as e:
+                        result = {"result": str(e),
+                      "message": "websocket command failed"}
 
                     await websocket.send_json({
                         "type": "command_result",

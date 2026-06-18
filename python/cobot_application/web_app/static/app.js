@@ -1,4 +1,4 @@
-import { VisionCommands, CobotCommands, CameraCommands, WebCommand } from "./commands.js";
+import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js";
 
 
 async function loadConfig() {
@@ -92,12 +92,15 @@ function connectWebSocket() {
 /**
  * @param {ReceiverType} receiver
  */
-function sendCommand(reciver,command,value) {
+function sendCommand(receiver,command,payload = null) {
     console.log("Sending command:", command);
 
 
-    if(!isValidCommand(reciver,command))
-        console.log("command invalid")
+    if(!isValidCommand(receiver,command)) {
+
+        console.log("command invalid");
+        return;
+    }
 
 
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -109,11 +112,13 @@ function sendCommand(reciver,command,value) {
         return;
     }
 
-    const payload = {
-        command: command
+    const outgoing = {
+        receiver: receiver,
+        command: command,
+        payload: payload
     };
 
-    socket.send(JSON.stringify(payload));
+    socket.send(JSON.stringify(outgoing));
 }
 
 function isValidCommand(receiver, command) {
@@ -131,7 +136,7 @@ function isValidCommand(receiver, command) {
     return Object.values(commands).includes(command);
 }
 
-//
+/*
 function sendRobotCommand(command) {
     console.log("Sending command:", command);
 
@@ -172,8 +177,11 @@ function sendRobotCommandWithValue(command, commandValue) {
     socket.send(JSON.stringify(payload));
 }
 
+*/
+
 connectWebSocket();
 loadConfig();
 loadLatestImage();
 
 setInterval(loadLatestImage, 5000);
+

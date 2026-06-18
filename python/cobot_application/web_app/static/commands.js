@@ -16,7 +16,7 @@ export const CameraCommands = Object.freeze({
     SNAPSHOT: "snapshot",
 });
 
-export const Reciver = Object.freeze({
+export const Receiver = Object.freeze({
     CAMERA: "CAMERA",
     COBOT: "COBOT",
     VISION: "VISION"
