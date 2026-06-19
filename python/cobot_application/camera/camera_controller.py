@@ -4,11 +4,17 @@ from cobot_application.camera import astra_cpp
 from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, camera_commands
 
 class Camera_Controller():
+
     def __init__(self,network: Py_network,configurations):
+        
         self.network = network
         self.id = package_ID.camera_id
         self.command_queue = network.command_queues[self.id.value]
         self.configurations = configurations
+
+        print("starting camera initialization",flush=True)
+        self.camera = astra_cpp.AstraCamera()
+        self.camera.start()
 
 
         # camera command map
@@ -39,6 +45,8 @@ class Camera_Controller():
     async def snapshot(self, command):
 
         new_snapshot = astra_cpp.RGBBFrame()
+
+        ##new_snapshot = self.came
             
 
 

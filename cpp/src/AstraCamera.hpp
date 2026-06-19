@@ -95,7 +95,7 @@ private:
     std::thread worker_;
     astra_status camera_status{};
 
-    astra::StreamSet streamSet_;
-    astra::StreamReader reader_;
+    std::unique_ptr<astra::StreamSet> streamSet_;
+    std::unique_ptr<astra::StreamReader> reader_;
 
 };

@@ -23,9 +23,9 @@ async def main():
 
     #create tasks for each of the fourn packge loops 
     tasks = [
-       asyncio.create_task(webpage.loop()),     
+       #asyncio.create_task(webpage.loop()),     
        asyncio.create_task(camera.loop()),
-       asyncio.create_task(vision.loop()),
+       #asyncio.create_task(vision.loop()),
        #asyncio.create_task(cobot.loop()),
     ]
 

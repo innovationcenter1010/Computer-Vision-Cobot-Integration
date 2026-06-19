@@ -4,9 +4,26 @@ const int FRAME_TIMEOUT_MS = -1;//forever
 
 
 AstraCamera::AstraCamera()
-:
-reader_(streamSet_.create_reader())
 {
+    std::cerr << "before astra init\n";
+
+    astra::initialize();
+
+    std::cerr << "astra initialized\n";
+
+
+    streamSet_ = std::make_unique<astra::StreamSet>();
+
+    std::cerr << "streamset created\n";
+
+
+    reader_ = std::make_unique<astra::StreamReader>(
+        streamSet_->create_reader()
+    );
+
+    std::cerr << "reader created\n";
+
+
     camera_status.connected = false;
     camera_status.streaming = false;
     camera_status.framesCaptured = 0;
@@ -23,16 +40,18 @@ AstraCamera::~AstraCamera()
 
 bool AstraCamera::start()
 {
+
+    std::cout << "astra starting";
+
     if (running_)
         return true;
 
-    astra::initialize();
 
     astra::DepthStream depth =
-        reader_.stream<astra::DepthStream>();
+        reader_->stream<astra::DepthStream>();
 
     astra::ColorStream color =
-        reader_.stream<astra::ColorStream>();
+        reader_->stream<astra::ColorStream>();
 
     depth.start();
     color.start();
@@ -40,6 +59,8 @@ bool AstraCamera::start()
     running_ = true;
 
     worker_ = std::thread(&AstraCamera::run,this);
+
+    std::cout << "astra started";
 
     return true;
 }
@@ -72,7 +93,7 @@ void AstraCamera::run()
 {
     while(running_)
     {
-        astra::Frame frame = reader_.get_latest_frame(FRAME_TIMEOUT_MS);
+        astra::Frame frame = reader_->get_latest_frame(FRAME_TIMEOUT_MS);
 
         astra::DepthFrame depth = frame.get<astra::DepthFrame>(); 
         astra::ColorFrame color = frame.get<astra::ColorFrame>();
