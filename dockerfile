@@ -50,30 +50,6 @@ COPY python/pyproject.toml /tmp/python/pyproject.toml
 
 COPY . /app
 
-# compile the orbec sdk
-RUN cd /app/python/cobot_application/third_party/orbbec_sdk_v2 && \
-    mkdir -p build install && \
-    cd build && \
-    cmake .. \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=../install \
-        -DCMAKE_CXX_FLAGS="-Wno-error -Wno-maybe-uninitialized" \
-        -DCMAKE_C_FLAGS="-Wno-error" && \
-    make -j$(nproc) && \
-    make install
-
-#copy the orbec sdk into the python wrapper 
-RUN cp -r \
-    /app/python/cobot_application/third_party/orbbec_sdk_v2/install \
-    /app/python/cobot_application/third_party/orbbec_sdk_v2_python/
-
-ENV ORBBEC_SDK_PATH=/app/python/cobot_application/third_party/orbbec_sdk_v2/install
-ENV CMAKE_PREFIX_PATH=$ORBBEC_SDK_PATH:$CMAKE_PREFIX_PATH
-ENV LD_LIBRARY_PATH=$ORBBEC_SDK_PATH/lib:$LD_LIBRARY_PATH
-
-#compile the python wrappers
-RUN pip3 install -e /app/python/cobot_application/third_party/orbbec_sdk_v2_python
-
 #comile the python code
 RUN pip3 install --break-system-packages -e ./python
 

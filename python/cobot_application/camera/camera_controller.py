@@ -1,4 +1,5 @@
 import asyncio
+import astra_cpp
 
 from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, camera_commands
 from python.cobot_application.camera.camera import OrbecCamera, orbec_snapshot 
@@ -39,16 +40,8 @@ class Camera_Controller():
 
 
     async def snapshot(self, command):
-            
-            snapshot: orbec_snapshot = await self.camera.get_snapshot()
+
+        new_snapshot = astra_cpp.RGBBFrame()
             
 
-            snapshot_command = P2P_command(
-                sender_ID=self.id,
-                receiver_ID=package_ID.vision_id,
-                message="snapshot_image",
-                value=snapshot
-                )
-
-            self.network.send(snapshot_command)
 
