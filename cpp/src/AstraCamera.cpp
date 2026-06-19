@@ -14,6 +14,13 @@ reader_(streamSet_.create_reader())
     camera_status.lastFrameTimestamp = 0;
 }
 
+AstraCamera::~AstraCamera()
+{
+    stop();
+}
+
+
+
 bool AstraCamera::start()
 {
     if (running_)

@@ -1,6 +1,10 @@
 #pragma once
 
 #include <astra/astra.hpp>
+#include <astra_core/astra_core.hpp>
+#include <astra/capi/astra.h>
+#include <astra_core/capi/astra_core.h>
+
 
 #include <atomic>
 #include <mutex>

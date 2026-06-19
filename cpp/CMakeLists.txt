@@ -1,3 +1,9 @@
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+
+set(CMAKE_INSTALL_RPATH
+    "$ORIGIN"
+)
+
 set(YMCONNECT_ROOT
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/YMConnect
 )
@@ -33,19 +39,31 @@ set(ASTRA_ROOT
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/AstraSDK
 )
 
-
-add_library(AstraSDK SHARED IMPORTED)
-
-
-set_target_properties(AstraSDK PROPERTIES
-
+add_library(astra SHARED IMPORTED)
+set_target_properties(astra PROPERTIES
     IMPORTED_LOCATION
         ${ASTRA_ROOT}/lib/libastra.so
-
     INTERFACE_INCLUDE_DIRECTORIES
         ${ASTRA_ROOT}/include
 )
 
+
+add_library(astra_core_api SHARED IMPORTED)
+set_target_properties(astra_core_api PROPERTIES
+    IMPORTED_LOCATION
+        ${ASTRA_ROOT}/lib/libastra_core_api.so
+    INTERFACE_INCLUDE_DIRECTORIES
+        ${ASTRA_ROOT}/include
+)
+
+
+add_library(astra_core_sdk SHARED IMPORTED)
+set_target_properties(astra_core_sdk PROPERTIES
+    IMPORTED_LOCATION
+        ${ASTRA_ROOT}/lib/libastra_core.so
+    INTERFACE_INCLUDE_DIRECTORIES
+        ${ASTRA_ROOT}/include
+)
 
 # ------------- linking --------
 
@@ -56,9 +74,10 @@ target_include_directories(astra_core PUBLIC
 
 
 target_link_libraries(astra_core PUBLIC
-    AstraSDK
+    astra
+    astra_core_api
+    astra_core_sdk
 )
-
 #----------
 
 target_link_libraries(robot_core PUBLIC YMConnect)
@@ -81,6 +100,38 @@ pybind11_add_module(astra_cpp
 
 target_link_libraries(astra_cpp PRIVATE
     astra_core
+    astra
+    astra_core_api
+    astra_core_sdk
+)
+# ------------------- output pybind modules to proper python appication packages -----
+
+add_custom_command(TARGET astra_cpp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying Astra libraries"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${ASTRA_ROOT}/lib/libastra.so
+        $<TARGET_FILE_DIR:astra_cpp>
+)
+
+add_custom_command(TARGET astra_cpp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying Astra libraries"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${ASTRA_ROOT}/lib/libastra_core_api.so
+        $<TARGET_FILE_DIR:astra_cpp>
+)
+
+add_custom_command(TARGET astra_cpp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying Astra libraries"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${ASTRA_ROOT}/lib/libastra_core.so
+        $<TARGET_FILE_DIR:astra_cpp>
+)
+
+add_custom_command(TARGET motoman_cpp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying YMConnect"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${YMCONNECT_ROOT}/libYMConnect.so
+        $<TARGET_FILE_DIR:motoman_cpp>
 )
 
 # ------------------- output pybind modules to proper python appication packages -----

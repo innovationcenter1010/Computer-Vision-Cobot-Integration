@@ -1,8 +1,7 @@
 import asyncio
-import astra_cpp
+from cobot_application.camera import astra_cpp
 
 from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, camera_commands
-from python.cobot_application.camera.camera import OrbecCamera, orbec_snapshot 
 
 class Camera_Controller():
     def __init__(self,network: Py_network,configurations):
@@ -11,8 +10,6 @@ class Camera_Controller():
         self.command_queue = network.command_queues[self.id.value]
         self.configurations = configurations
 
-        self.camera = OrbecCamera()
-        self.camera.connect()
 
         # camera command map
         self.command_map = {
