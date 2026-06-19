@@ -1,7 +1,9 @@
 import asyncio
 from cobot_application.camera import astra_cpp
+import numpy as np
 
-from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, camera_commands
+from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, camera_commands, vision_commands
+from python.cobot_application.camera.preprocessing import rgbdframe_to_numpy
 
 class Camera_Controller():
 
@@ -44,9 +46,26 @@ class Camera_Controller():
 
     async def snapshot(self, command):
 
-        new_snapshot = astra_cpp.RGBBFrame()
+        print("taking snapshot",flush=True)
 
-        ##new_snapshot = self.came
+        new_snapshot = astra_cpp.RGBDFrame()
+
+        new_snapshot_result = self.camera.get_frame()
+
+        new_snapshot = new_snapshot_result.snapshot
+
+        outgoing_snapshot = rgbdframe_to_numpy(new_snapshot)
+
+        vision_command = P2P_command(
+            receiver_ID=package_ID.vision_id,
+            sender_ID=package_ID.camera_id,
+            message=vision_commands.detect,
+            value=outgoing_snapshot
+        )
+
+        await self.network.send(vision_command)
+
+
             
 
 
