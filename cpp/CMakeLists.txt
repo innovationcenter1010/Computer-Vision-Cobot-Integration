@@ -34,30 +34,13 @@ set(ASTRA_ROOT
 )
 
 
-add_library(Astra SHARED IMPORTED)
+add_library(AstraSDK SHARED IMPORTED)
 
-set_target_properties(Astra PROPERTIES
 
-    IMPORTED_IMPLIB
-        ${ASTRA_ROOT}/lib/astra.lib
+set_target_properties(AstraSDK PROPERTIES
 
     IMPORTED_LOCATION
-        ${ASTRA_ROOT}/bin/astra.dll
-
-    INTERFACE_INCLUDE_DIRECTORIES
-        ${ASTRA_ROOT}/include
-)
-
-
-add_library(AstraCore SHARED IMPORTED)
-
-set_target_properties(AstraCore PROPERTIES
-
-    IMPORTED_IMPLIB
-        ${ASTRA_ROOT}/lib/astra_core.lib
-
-    IMPORTED_LOCATION
-        ${ASTRA_ROOT}/bin/astra_core.dll
+        ${ASTRA_ROOT}/lib/libastra.so
 
     INTERFACE_INCLUDE_DIRECTORIES
         ${ASTRA_ROOT}/include
@@ -73,15 +56,14 @@ target_include_directories(astra_core PUBLIC
 
 
 target_link_libraries(astra_core PUBLIC
-    Astra
-    AstraCore
+    AstraSDK
 )
 
 #----------
 
 target_link_libraries(robot_core PUBLIC YMConnect)
 
-# ------------------ pybind 
+# ------------------ pybind ----------------------
 
 pybind11_add_module(motoman_cpp
     src/MotomanRobotBindings.cpp
@@ -101,15 +83,13 @@ target_link_libraries(astra_cpp PRIVATE
     astra_core
 )
 
+# ------------------- output pybind modules to proper python appication packages -----
+
 set_target_properties(motoman_cpp PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/python/cobot_application/cobot
 )
 
-set(CAMERA_OUTPUT
-    ${CMAKE_SOURCE_DIR}/python/cobot_application/cobot
+set_target_properties(astra_cpp PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/python/cobot_application/camera
 )
 
-set_target_properties(astra_cpp PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY ${CAMERA_OUTPUT}
-    RUNTIME_OUTPUT_DIRECTORY ${CAMERA_OUTPUT}
-)
