@@ -94,6 +94,19 @@ button {
     font-weight: bold;
 }
 
+.vision-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    align-items: start;
+}
+
+.vision-item img {
+    width: 100%;
+    height: auto;
+    border-radius: 6px;
+}
+
 @media (max-width: 800px) {
     .dashboard-grid {
         grid-template-columns: 1fr;

@@ -38,6 +38,7 @@ async function saveConfig() {
     document.getElementById("save_status").innerText = "Saved!";
 }
 
+/*
 async function loadLatestImage() {
     const response = await fetch("/api/latest-image");
     const result = await response.json();
@@ -52,6 +53,8 @@ async function loadLatestImage() {
         img.alt = "Latest image";
     }
 }
+
+*/
 
 let socket = null;
 
@@ -72,6 +75,20 @@ function connectWebSocket() {
             document.getElementById("robot_command_status").innerText =
                 data.result.message;
         }
+
+        if (data.type === "camera_frame") {
+
+        rgbImage.src =
+            "data:image/jpeg;base64," + data.rgb;
+
+        depthImage.src =
+            "data:image/jpeg;base64," + data.depth;
+
+        return;
+    }
+
+
+
     };
 
     socket.onclose = function () {

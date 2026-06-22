@@ -1,6 +1,11 @@
+import cv2
+import numpy as np
+
 import asyncio
+
 from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, vision_commands, cobot_commands
 from cobot_application.vision_system.run_operation_scan import run_YOLO
+from cobot_application.camera.preprocessing import RGBDImage, convert_to_image_bytes
 
 
 class Vision_Controller():
@@ -12,7 +17,8 @@ class Vision_Controller():
 
         self.command_map = {
 
-            vision_commands.detect: self.scan
+            vision_commands.detect: self.scan,
+            vision_commands.convert_to_jpeg_bytes: self.convert_to_jpeg_bytes
 
         }
 
@@ -57,3 +63,8 @@ class Vision_Controller():
         )
 
         await self.network.send(layer_command)
+
+
+
+
+

@@ -33,6 +33,8 @@ async def main():
        asyncio.create_task(webpage.loop()),     
        asyncio.create_task(camera.loop()),
        asyncio.create_task(vision.loop()),
+       asyncio.create_task(webpage.run_server()),
+       asyncio.create_task(camera.stream())
        #asyncio.create_task(cobot.loop()),
     ]
 

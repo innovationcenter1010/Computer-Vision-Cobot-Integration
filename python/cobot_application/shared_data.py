@@ -32,6 +32,7 @@ class package_ID(Enum):
 ## library for commands that can be sent to each system
 class vision_commands(Enum):
     detect = auto()
+    convert_to_jpeg_bytes = auto()
 
 class cobot_commands(Enum):
     pick_layer = auto()
@@ -44,6 +45,7 @@ class camera_commands(Enum):
 
 class web_commands(Enum):
     refresh = auto()
+    update_image = auto()
 
 COMMAND_REGISTRY = {
     package_ID.vision_id.value: vision_commands,
@@ -90,6 +92,8 @@ class Py_network():
         self.cobot_state = "not initialized"
         self.web_state = "not initialized"
         self.vision_state =  "not initialized"
+
+        
 
     async def send(self,command: P2P_command):
 

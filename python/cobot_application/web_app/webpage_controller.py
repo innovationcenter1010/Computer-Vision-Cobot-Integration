@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import base64
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -7,7 +8,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from python.cobot_application.shared_data import P2P_command, package_ID, Py_network, COMMAND_REGISTRY
+from python.cobot_application.shared_data import P2P_command, package_ID, Py_network, COMMAND_REGISTRY, web_commands
 
 
 
@@ -114,6 +115,12 @@ class Webpage_Controller:
 
         self.setup_routes()
 
+
+        self.command_map = {
+            web_commands.update_image: self.update_image
+        }
+
+
         print("Webpage controller awake", flush=True)
         print("Web config path:", self.config_path, flush=True)
         print("Web results path:", self.results_dir, flush=True)
@@ -124,8 +131,8 @@ class Webpage_Controller:
         print("Using results path:", results_path, flush=True)
 
         return results_path
-
-    async def loop(self):
+    
+    async def run_server(self):
         print("Starting webpage server...", flush=True)
 
         config = uvicorn.Config(
@@ -136,7 +143,53 @@ class Webpage_Controller:
         )
 
         server = uvicorn.Server(config)
-        await server.serve()
+        await server.serve() 
+
+    async def loop(self):
+        print("Vision waiting for command...", flush=True)
+
+        #wait for a command to come in
+        command: P2P_command = await self.command_queue.get()
+
+        #map the command from the command map to run the actual function
+        handle = self.command_map.get(command.message)
+        
+        #only run the command if it is properly mapped
+        if handle: await handle(command)
+
+        else: raise RuntimeError("Unknown command:", command.message)
+
+    async def update_image(self, command: P2P_command):
+
+        rgb_bytes = command.value["rgb"]
+        depth_bytes = command.value["depth"]
+
+        message = {
+            "type": "camera_frame",
+            "rgb": base64.b64encode(rgb_bytes).decode("ascii"),
+            "depth": base64.b64encode(depth_bytes).decode("ascii"),
+        }
+
+        disconnected = []
+
+        for websocket in self.websockets:
+
+            try:
+                await websocket.send_json(message)
+
+            except Exception as e:
+
+                print(
+                    f"Failed to send image to websocket: {e}",
+                    flush=True
+                )
+
+                disconnected.append(websocket)
+
+        for websocket in disconnected:
+            self.websockets.discard(websocket)
+
+
 
     async def handle_web_command(self, receiver: str,command: str,payload: str):
 

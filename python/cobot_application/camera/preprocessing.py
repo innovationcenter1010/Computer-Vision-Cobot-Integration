@@ -1,6 +1,7 @@
 from cobot_application.camera import astra_cpp
 
 from dataclasses import dataclass
+import cv2
 import numpy as np
 
 
@@ -93,3 +94,52 @@ def rgbdframe_to_numpy(frame: astra_cpp.RGBDFrame) -> RGBDImage:
         depth_width=frame.depth_width,
         depth_height=frame.depth_height,
     )
+
+def convert_to_image_bytes(image: RGBDImage) -> str:
+
+    bgr = cv2.cvtColor(image.rgb, cv2.COLOR_RGB2BGR)
+
+    success, encoded = cv2.imencode(
+        ".jpg",
+        bgr,
+        [cv2.IMWRITE_JPEG_QUALITY, 95],
+    )
+
+    if not success:
+        raise RuntimeError("JPEG encoding failed")
+
+    return encoded.tobytes()
+
+def depth_to_jpeg(self, depth: np.ndarray) -> bytes:
+
+    depth_f = depth.astype(np.float32)
+
+    valid_mask = depth_f > 0
+
+    if np.any(valid_mask):
+        depth_min = np.min(depth_f[valid_mask])
+        depth_max = np.max(depth_f[valid_mask])
+
+        if depth_max > depth_min:
+            depth_u8 = (
+                (depth_f - depth_min)
+                / (depth_max - depth_min)
+                * 255
+            ).astype(np.uint8)
+        else:
+            depth_u8 = np.zeros(depth.shape, dtype=np.uint8)
+    else:
+        depth_u8 = np.zeros(depth.shape, dtype=np.uint8)
+
+    heatmap = cv2.applyColorMap(depth_u8, cv2.COLORMAP_TURBO)
+
+    success, encoded = cv2.imencode(
+        ".jpg",
+        heatmap,
+        [cv2.IMWRITE_JPEG_QUALITY, 95],
+    )
+
+    if not success:
+        raise RuntimeError("Failed to encode depth image")
+
+    return encoded.tobytes()
