@@ -6,6 +6,9 @@ services:
 
     image: cobot-ai
 
+    pull_policy: never
+    restart: unless-stopped
+
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
