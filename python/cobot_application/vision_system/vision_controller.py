@@ -18,7 +18,7 @@ class Vision_Controller():
         self.command_map = {
 
             vision_commands.detect: self.scan,
-            vision_commands.convert_to_jpeg_bytes: self.convert_to_jpeg_bytes
+            #vision_commands.convert_to_jpeg_bytes: self.convert_to_jpeg_bytes
 
         }
 

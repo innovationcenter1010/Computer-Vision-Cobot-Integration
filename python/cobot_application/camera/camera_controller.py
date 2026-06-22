@@ -16,7 +16,7 @@ class Camera_Controller():
 
         print("starting camera initialization",flush=True)
         self.camera = astra_cpp.AstraCamera()
-        self.camera.start()
+        print("Starting:  ",self.camera.start(),flush=True)
 
 
         # camera command map
@@ -45,7 +45,7 @@ class Camera_Controller():
 
     async def stream(self):
         while True:
-            self.send_image_to_web()
+            await self.send_image_to_web()
             await asyncio.sleep(1)
 
 
@@ -81,8 +81,14 @@ class Camera_Controller():
 
         new_image_arrays = rgbdframe_to_numpy(new_image)
 
-        new_image_bytes = convert_to_image_bytes(new_image_arrays)
-        new_depth_bytes = depth_to_jpeg(new_image_arrays)
+
+        try:
+            new_image_bytes = convert_to_image_bytes(new_image_arrays)
+            new_depth_bytes = depth_to_jpeg(new_image_arrays)
+
+        except Exception as e:
+            print(f"Failed to convert image/depth: {e}", flush=True)
+            return  # or handle fallback here
 
         new_frame_command = P2P_command(
             sender_ID=package_ID.camera_id,

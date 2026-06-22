@@ -40,7 +40,7 @@ def rgbdframe_to_numpy(frame: astra_cpp.RGBDFrame) -> RGBDImage:
     """
 
     # RGB vector<uint8_t> -> numpy
-    rgb = np.asarray(frame.rgb, dtype=np.uint8)
+    rgb = np.array(frame.rgb, dtype=np.uint8, copy=True)
 
     expected_rgb_size = (
         frame.color_height
@@ -61,7 +61,7 @@ def rgbdframe_to_numpy(frame: astra_cpp.RGBDFrame) -> RGBDImage:
     )
 
     # depth vector<int16_t> -> numpy
-    depth = np.asarray(frame.depth, dtype=np.int16)
+    depth = np.array(frame.depth, dtype=np.int16, copy=True)
 
     expected_depth_size = (
         frame.depth_height
@@ -97,6 +97,22 @@ def rgbdframe_to_numpy(frame: astra_cpp.RGBDFrame) -> RGBDImage:
 
 def convert_to_image_bytes(image: RGBDImage) -> str:
 
+    if image.rgb is None:
+        raise ValueError("RGB frame is None")
+
+    if not isinstance(image.rgb, np.ndarray):
+        raise TypeError("RGB frame is not a numpy array")
+
+    if image.rgb.size == 0:
+        raise ValueError("RGB frame is empty")
+
+    if image.rgb.ndim != 3:
+        raise ValueError(f"Invalid RGB shape: {image.rgb.shape}")
+    
+
+
+    bgr = cv2.cvtColor(image.rgb, cv2.COLOR_RGB2BGR)
+
     bgr = cv2.cvtColor(image.rgb, cv2.COLOR_RGB2BGR)
 
     success, encoded = cv2.imencode(
@@ -110,7 +126,37 @@ def convert_to_image_bytes(image: RGBDImage) -> str:
 
     return encoded.tobytes()
 
-def depth_to_jpeg(self, depth: np.ndarray) -> bytes:
+def depth_to_jpeg(self, image: RGBDImage) -> bytes:
+    
+    depth = image.depth
+
+    # -------------------------
+    # VALIDATION CHECKS
+    # -------------------------
+
+    if image is None:
+        raise ValueError("RGBDImage is None")
+
+    if not hasattr(image, "depth"):
+        raise TypeError("Input does not contain 'depth' field")
+
+    depth = image.depth
+
+    if depth is None:
+        raise ValueError("Depth image is None")
+
+    if not isinstance(depth, np.ndarray):
+        raise TypeError(f"Depth must be numpy array, got {type(depth)}")
+
+    if depth.size == 0:
+        raise ValueError("Depth image is empty")
+
+    if depth.ndim != 2:
+        raise ValueError(f"Expected depth shape (H, W), got {depth.shape}")
+
+    # -------------------------
+    # PROCESSING
+    # -------------------------
 
     depth_f = depth.astype(np.float32)
 
