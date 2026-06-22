@@ -1,7 +1,7 @@
 body {
     margin: 0;
     font-family: Arial, sans-serif;
-    background: #fce4a3;
+    background: #c4c1bb;
 }
 
 .page {
@@ -90,6 +90,37 @@ button {
 
 #save_status,
 #robot_command_status {
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+.button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.speed-control {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #ddd;
+}
+
+#cobot_speed_slider {
+    width: 100%;
+    margin-top: 8px;
+}
+
+.speed-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+#cobot_speed_status {
     margin-top: 10px;
     font-weight: bold;
 }

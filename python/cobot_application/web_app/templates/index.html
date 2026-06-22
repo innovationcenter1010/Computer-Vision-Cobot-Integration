@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>Cobot Control Panel</title>
-    <link rel="stylesheet" href="/static/style.css?v=3">
+    <link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 
 <body>
@@ -38,29 +38,69 @@
             <section class="card robot-card">
                 <h2>Robot Commands</h2>
 
-                <button type="button" onclick="sendRobotCommand('start_robot')" class="start">
-                    Start
-                </button>
+                <div class="button-row">
+                    <button type="button" onclick="sendRobotCommand('start_robot')" class="start">
+                        Start
+                    </button>
 
-                <button type="button" onclick="sendRobotCommand('calibrate_robot')" class="start">
-                    Calibrate
-                </button>
+                    <button type="button" onclick="sendRobotCommand('calibrate_robot')" class="start">
+                        Calibrate
+                    </button>
 
-                <button type="button" onclick="sendRobotCommand('stop_robot')" class="danger">
-                    Stop
-                </button>
+                     <button type="button" onclick="sendRobotCommand('retake_photo')" class="start">
+                        Retake Photo
+                    </button>
 
-                <p id="robot_command_status"></p>
+                    <button type="button" onclick="sendRobotCommand('stop_robot')" class="danger">
+                        Stop
+                    </button>
+                </div>
+
+                <div class="speed-control">
+                    <h3>Cobot Speed</h3>
+
+                    <input
+                        id="cobot_speed_slider"
+                        type="range"
+                        min="1"
+                        max="4"
+                        step="1"
+                        value="2"
+                        oninput="updateSpeedDisplay()"
+                        onchange="sendSpeedCommand()"
+                    >
+
+                    <div class="speed-labels">
+                        <span>Slow</span>
+                        <span>Medium</span>
+                        <span>Fast</span>
+                        <span>Max</span>
+                    </div>
+
+                <div class="feedback-section">
+                    <h3>Cobot Feedback</h3>
+
+                    <div id="cobot_feedback_box" class="feedback-box">
+                        <p id="cobot_feedback">No cobot messages yet.</p>
+                    </div>
+                </div>
             </section>
 
             <section class="card image-card">
-                <h2>Latest Vision Image</h2>
+                <div class="image-header">
+                    <h2>Latest Vision Image</h2>
+
+                    <button type="button" onclick="loadLatestImage()">
+                        Refresh Image
+                    </button>
+                </div>
+
                 <img id="latest_image" alt="Latest image">
             </section>
 
         </div>
     </main>
 
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=4"></script>
 </body>
 </html>
