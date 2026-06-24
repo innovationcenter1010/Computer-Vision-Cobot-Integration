@@ -16,6 +16,7 @@ class Camera_Controller():
         self.configurations = configurations
 
         self.camera_stream = CameraStream()
+        self.camera_stream.start()
 
         print("Waiting for first frames...")
         self.camera_stream.wait_for_color()

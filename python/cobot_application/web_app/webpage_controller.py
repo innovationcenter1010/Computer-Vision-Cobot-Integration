@@ -2,6 +2,8 @@ import asyncio
 import json
 from pathlib import Path
 import base64
+import numpy as np
+import cv2
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -159,28 +161,6 @@ class Webpage_Controller:
         server = uvicorn.Server(config)
         await server.serve() 
 
-        await asyncio.gather(
-            server.serve(),
-            self.web_message_loop()
-        )
-
-    async def web_message_loop(self):
-        while True:
-            command = await self.network.web_commands.get()
-
-            print(
-                "Webpage received reverse message:",
-                command.message,
-                command.value,
-                flush=True
-            )
-
-            await self.broadcast_to_clients({
-                "type": command.message,
-                "sender": str(command.sender_ID),
-                "message": command.value
-            })
-
     async def broadcast_to_clients(self, payload):
         disconnected_clients = []
 
@@ -195,18 +175,19 @@ class Webpage_Controller:
                 self.connected_clients.remove(websocket)
 
     async def loop(self):
-        print("Vision waiting for command...", flush=True)
+        while True:
+            print("Vision waiting for command...", flush=True)
 
-        #wait for a command to come in
-        command: P2P_command = await self.command_queue.get()
+            #wait for a command to come in
+            command: P2P_command = await self.command_queue.get()
 
-        #map the command from the command map to run the actual function
-        handle = self.command_map.get(command.message)
-        
-        #only run the command if it is properly mapped
-        if handle: await handle(command)
+            #map the command from the command map to run the actual function
+            handle = self.command_map.get(command.message)
+            
+            #only run the command if it is properly mapped
+            if handle: await handle(command)
 
-        else: raise RuntimeError("Unknown command:", command.message)
+            else: raise RuntimeError("Unknown command:", command.message)
 
     async def update_image(self, command: P2P_command):
 
