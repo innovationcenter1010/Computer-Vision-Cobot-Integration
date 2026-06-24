@@ -27,14 +27,18 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# seperate ultralitics dowsload to speed up dev build time
+RUN pip3 install --break-system-packages \
+    ultralytics
+
 
 RUN pip3 install --break-system-packages \
-    ultralytics \
     opencv-python-headless \
     numpy \
     pyyaml \
     fastapi \
     "uvicorn[standard]" \
+    pyzmq \
     jinja2
 
 
@@ -76,7 +80,13 @@ ENV LD_LIBRARY_PATH=/app/third_party/YMConnect:$LD_LIBRARY_PATH
 
 ENV PYTHONPATH=/app/build/python:$PYTHONPATH
 
+
+# Port for web ui
 EXPOSE 8000
+
+# Ports for camera ZMQ streaming
+EXPOSE 5550
+EXPOSE 5551
 
 # =========================================================
 # Debugging
