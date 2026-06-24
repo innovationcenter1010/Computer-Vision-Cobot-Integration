@@ -5,14 +5,20 @@ from datetime import datetime
  
 from cobot_application.camera.camera_streamer import DualFrame
  
-SAVE_DIR = Path("/app/images")
+# Matches the volume mount in docker-compose.yaml:
+#   ./vision_workspace:/app/vision_workspace
+# so files written here are immediately visible on the host.
+SAVE_DIR = Path("/app/vision_workspace/operation/results")
  
  
 def save_dual_frame(dual_frame: DualFrame) -> None:
     """
-    Saves a DualFrame to /app/images as two JPEGs:
-      - <timestamp>_color.jpg       — raw RGB color frame
-      - <timestamp>_depth.jpg       — depth frame colormapped with COLORMAP_JET
+    Saves a DualFrame to vision_workspace/operation/results as two JPEGs.
+    This directory is bind-mounted to the host via docker-compose so files
+    are visible immediately without copying out of the container.
+ 
+      - <timestamp>_color.jpg   — raw RGB color frame
+      - <timestamp>_depth.jpg   — depth frame colormapped with COLORMAP_JET
     """
     SAVE_DIR.mkdir(parents=True, exist_ok=True)
  
