@@ -54,14 +54,14 @@ class Camera_Controller():
 
         outgoing_frame = DualFrame()
         
-        outgoing_frame.depth_frame = self.camera_stream.wait_for_depth()
-        outgoing_frame.color_frame = self.camera_stream.wait_for_color()
+        outgoing_frame.depth_frame = self.camera_stream.latest_depth
+        outgoing_frame.color_frame = self.camera_stream.latest_color
 
 
         snapshot_command = P2P_command(
             receiver_ID= command.sender_ID,
             sender_ID=package_ID.camera_id,
-            message=vision_commands.detect,
+            message=vision_commands.convert_to_jpeg,
             value=outgoing_frame
         )
 
