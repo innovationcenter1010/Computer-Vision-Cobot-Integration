@@ -40,8 +40,10 @@ async function saveConfig() {
 
 /*
 async function loadLatestImage() {
-    const response = await fetch("/api/latest-image");
+    const response = await fetch("/api/latest-image?t=" + new Date().getTime());
     const result = await response.json();
+
+    console.log("Latest image result:", result);
 
     const img = document.getElementById("latest_image");
 
@@ -201,6 +203,60 @@ window.Receiver = Receiver;
 window.VisionCommands = VisionCommands;
 window.CobotCommands = CobotCommands;
 window.CameraCommands = CameraCommands;
+
+let speedCommandTimer = null;
+let lastSentSpeedLevel = null;
+
+const SPEED_COMMAND_DELAY_MS = 1500;
+
+function getSpeedLabel(speedLevel) {
+    const speedLabels = {
+        1: "Slow",
+        2: "Medium",
+        3: "Fast",
+        4: "Max"
+    };
+
+    return speedLabels[speedLevel] || "Unknown";
+}
+
+function updateSpeedDisplay() {
+    const slider = document.getElementById("cobot_speed_slider");
+    const speedLevel = parseInt(slider.value);
+
+    document.getElementById("cobot_speed_status").innerText =
+        "Selected speed: " + getSpeedLabel(speedLevel) + " - waiting...";
+}
+
+function handleSpeedSliderInput() {
+    updateSpeedDisplay();
+
+    if (speedCommandTimer !== null) {
+        clearTimeout(speedCommandTimer);
+    }
+
+    speedCommandTimer = setTimeout(function () {
+        sendSpeedCommand();
+    }, SPEED_COMMAND_DELAY_MS);
+}
+
+function sendSpeedCommand() {
+    const slider = document.getElementById("cobot_speed_slider");
+    const speedLevel = parseInt(slider.value);
+
+    if (speedLevel === lastSentSpeedLevel) {
+        document.getElementById("cobot_speed_status").innerText =
+            "Selected speed: " + getSpeedLabel(speedLevel) + " - already sent";
+        return;
+    }
+
+    lastSentSpeedLevel = speedLevel;
+
+    document.getElementById("cobot_speed_status").innerText =
+        "Selected speed: " + getSpeedLabel(speedLevel) + " - sent";
+
+    sendRobotCommandWithValue("set_cobot_speed", speedLevel);
+}
 
 connectWebSocket();
 loadConfig();

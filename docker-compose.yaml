@@ -6,6 +6,9 @@ services:
 
     image: cobot-ai
 
+    pull_policy: never
+    restart: unless-stopped
+
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
@@ -22,7 +25,7 @@ services:
       - /dev/bus/usb:/dev/bus/usb
   
 
-    command: python3 -m cobot_application.main
+    command: ["python3", "-m", "cobot_application.main"]
 
     stdin_open: true
     tty: true
