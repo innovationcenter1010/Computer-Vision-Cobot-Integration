@@ -179,7 +179,5 @@ function sendSpeedCommand() {
 }
 
 connectWebSocket();
-loadConfig();
 loadLatestImage();
-updateSpeedDisplay();
 setInterval(loadLatestImage, 5000);

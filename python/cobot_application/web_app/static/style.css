@@ -5,17 +5,18 @@ body {
 }
 
 .page {
-    max-width: 1200px;
+    max-width: 1300px;
     margin: 0 auto;
     padding: 24px;
+}
+
+h1{
+    margin-bottom: 24px;
 }
 
 .dashboard-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    grid-template-areas:
-        "config robot"
-        "image image";
     gap: 20px;
     align-items: start;
 }
@@ -27,16 +28,29 @@ body {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
-.config-card {
-    grid-area: config;
-}
-
 .robot-card {
-    grid-area: robot;
+    min-height: 500px;
 }
 
 .image-card {
-    grid-area: image;
+    min-height: 500px;
+}
+
+.image-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 10px;
+}
+
+.image-header h2 { 
+    margin: 0; 
+} 
+
+.refresh-button {
+    margin: 0; 
+    white-space: nowrap; 
 }
 
 label {
@@ -52,15 +66,6 @@ input {
     margin-top: 4px;
 }
 
-.checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.checkbox-row input {
-    width: auto;
-}
 
 button {
     padding: 10px 16px;
@@ -86,6 +91,7 @@ button {
     object-fit: contain;
     border: 1px solid #ccc;
     background: #222;
+    margin-top: 0;
 }
 
 #save_status,
@@ -125,12 +131,8 @@ button {
     font-weight: bold;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 900px) {
     .dashboard-grid {
         grid-template-columns: 1fr;
-        grid-template-areas:
-            "config"
-            "robot"
-            "image";
     }
 }

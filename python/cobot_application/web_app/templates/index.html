@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>Cobot Control Panel</title>
-    <link rel="stylesheet" href="/static/style.css?v=4">
+    <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 
 <body>
@@ -10,30 +10,6 @@
         <h1>Cobot Control Panel</h1>
 
         <div class="dashboard-grid">
-
-            <section class="card config-card">
-                <h2>Configuration</h2>
-
-                <label for="robot_ip">Robot IP</label>
-                <input id="robot_ip" type="text">
-
-                <label for="camera_ip">Camera IP</label>
-                <input id="camera_ip" type="text">
-
-                <label for="save_folder">Save Folder</label>
-                <input id="save_folder" type="text">
-
-                <label for="confidence_threshold">Confidence Threshold</label>
-                <input id="confidence_threshold" type="number" step="0.01">
-
-                <label class="checkbox-row">
-                    <input id="enable_motion" type="checkbox">
-                    Enable Motion
-                </label>
-
-                <button type="button" onclick="saveConfig()">Save Config</button>
-                <p id="save_status"></p>
-            </section>
 
             <section class="card robot-card">
                 <h2>Robot Commands</h2>
@@ -89,12 +65,12 @@
                 <div class="image-header">
                     <h2>Latest Vision Image</h2>
 
-                    <button type="button" onclick="loadLatestImage()">
+                    <button type="button" onclick="loadLatestImage()" class="refresh-button">
                         Refresh Image
                     </button>
                 </div>
 
-                <img id="latest_image" alt="Latest image">
+                <img id="latest_image" src="" alt="No image found">
             </section>
 
         </div>
