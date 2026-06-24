@@ -20,7 +20,7 @@ services:
       - ./vision_workspace:/app/vision_workspace
   
 
-    command: python3 -m cobot_application.main
+    command: ["python3", "-m", "cobot_application.main"]
 
     stdin_open: true
     tty: true

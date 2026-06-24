@@ -3,7 +3,7 @@ import asyncio
 from cobot_application.shared_data import Py_network,Config
 
 #from cobot_application.camera.camera_controller import Camera_Controller
-from cobot_application.cobot.cobot_controller import Cobot_Controller
+#from cobot_application.cobot.cobot_controller import Cobot_Controller
 from cobot_application.vision_system.vision_controller import Vision_Controller
 from cobot_application.web_app.webpage_controller import Webpage_Controller
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -25,6 +26,8 @@ class Webpage_Controller:
         self.results_dir = self.find_results_dir()
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
+        self.connected_clients = []
+
         self.app = FastAPI()
         self.templates = Jinja2Templates(directory=self.base_dir / "templates")
 
@@ -35,11 +38,23 @@ class Webpage_Controller:
         print("Web results path:", self.results_dir, flush=True)
 
     def find_results_dir(self):
-        results_path = Path("/app/vision_workspace/operation/results")
+        possible_paths = [
+            Path("/app/vision_workspace/operation/results"),
+            self.project_root.parent / "vision_workspace" / "operation" / "results",
+            self.project_root / "vision_workspace" / "operation" / "results",
+            self.python_dir / "vision_workspace" / "operation" / "results",
+            self.python_dir / "cobot_application" / "vision_system" / "operation" / "results",
+        ]
 
-        print("Using results path:", results_path, flush=True)
+        for path in possible_paths:
+            print("Checking results path:", path, flush=True)
 
-        return results_path
+            if path.exists():
+                print("Using results path:", path, flush=True)
+                return path
+
+        print("No existing results path found. Using:", possible_paths[0], flush=True)
+        return possible_paths[0]
 
     async def loop(self):
         print("Starting webpage server...", flush=True)
@@ -52,7 +67,41 @@ class Webpage_Controller:
         )
 
         server = uvicorn.Server(config)
-        await server.serve()
+
+        await asyncio.gather(
+            server.serve(),
+            self.web_message_loop()
+        )
+
+    async def web_message_loop(self):
+        while True:
+            command = await self.network.web_commands.get()
+
+            print(
+                "Webpage received reverse message:",
+                command.message,
+                command.value,
+                flush=True
+            )
+
+            await self.broadcast_to_clients({
+                "type": command.message,
+                "sender": str(command.sender_ID),
+                "message": command.value
+            })
+
+    async def broadcast_to_clients(self, payload):
+        disconnected_clients = []
+
+        for websocket in self.connected_clients:
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                disconnected_clients.append(websocket)
+
+        for websocket in disconnected_clients:
+            if websocket in self.connected_clients:
+                self.connected_clients.remove(websocket)
 
     async def send_command(self, receiver_ID, message, value=None):
         print("WebpageController received command request", flush=True)
@@ -105,6 +154,13 @@ class Webpage_Controller:
             return await self.send_command(
                 receiver_ID=sender_ID.cobot_id,
                 message="calibrate_robot",
+                value=value
+            )
+
+        if command == "set_cobot_speed":
+            return await self.send_command(
+                receiver_ID=sender_ID.cobot_id,
+                message="set_cobot_speed",
                 value=value
             )
 
@@ -176,15 +232,25 @@ class Webpage_Controller:
                 list(self.results_dir.glob("*.png"))
             )
 
+            print("Looking for images in:", self.results_dir, flush=True)
+            print("Images found:", [p.name for p in image_files], flush=True)
+
             if not image_files:
                 return {"image": None}
 
             newest = max(image_files, key=lambda p: p.stat().st_mtime)
-            return {"image": f"/results/{newest.name}"}
+
+            print("Newest image selected:", newest.name, flush=True)
+
+            return {
+                "image": f"/results/{newest.name}",
+                "filename": newest.name
+            }
 
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
             await websocket.accept()
+            self.connected_clients.append(websocket)
 
             print("WebSocket connected", flush=True)
 
@@ -211,3 +277,7 @@ class Webpage_Controller:
 
             except WebSocketDisconnect:
                 print("WebSocket disconnected", flush=True)
+
+            finally:
+                if websocket in self.connected_clients:
+                    self.connected_clients.remove(websocket)
