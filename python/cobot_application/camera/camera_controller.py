@@ -4,6 +4,7 @@ import numpy as np
 
 from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, camera_commands, vision_commands, web_commands
 from python.cobot_application.camera.camera_streamer import CameraStream, DualFrame
+from cobot_application.camera.frame_saver import save_dual_frame
 
 
 class Camera_Controller():
@@ -22,6 +23,8 @@ class Camera_Controller():
         self.camera_stream.wait_for_color()
         self.camera_stream.wait_for_depth()
         print("Streams live.")
+
+        save_dual_frame(DualFrame(self.camera_stream.latest_depth,self.camera_stream.latest_color))
 
 
 
