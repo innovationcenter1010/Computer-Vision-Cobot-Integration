@@ -3,7 +3,7 @@ import shutil
 
 from ultralytics import YOLO
 
-from cobot_application.shared_data import Config
+from python.cobot_application.shared_data import Config
 
 
 # =========================================================

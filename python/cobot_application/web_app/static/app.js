@@ -1,3 +1,6 @@
+import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js";
+
+
 async function loadConfig() {
     const response = await fetch("/api/config");
     const config = await response.json();
@@ -35,6 +38,7 @@ async function saveConfig() {
     document.getElementById("save_status").innerText = "Saved!";
 }
 
+/*
 async function loadLatestImage() {
     const response = await fetch("/api/latest-image?t=" + new Date().getTime());
     const result = await response.json();
@@ -51,6 +55,8 @@ async function loadLatestImage() {
         img.alt = "Latest image";
     }
 }
+
+*/
 
 let socket = null;
 
@@ -71,6 +77,20 @@ function connectWebSocket() {
             document.getElementById("robot_command_status").innerText =
                 data.result.message;
         }
+
+        if (data.type === "camera_frame") {
+
+        rgbImage.src =
+            "data:image/jpeg;base64," + data.rgb;
+
+        depthImage.src =
+            "data:image/jpeg;base64," + data.depth;
+
+        return;
+    }
+
+
+
     };
 
     socket.onclose = function () {
@@ -84,6 +104,58 @@ function connectWebSocket() {
     };
 }
 
+/**
+ * @typedef {"CAMERA" | "COBOT" | "VISION"} ReceiverType
+ */
+
+/**
+ * @param {ReceiverType} receiver
+ */
+function sendCommand(receiver,command,payload = null) {
+    console.log("Sending command:", command);
+
+
+    if(!isValidCommand(receiver,command)) {
+
+        console.log("command invalid");
+        return;
+    }
+
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.log("WebSocket is not connected");
+
+        document.getElementById("robot_command_status").innerText =
+            "WebSocket is not connected";
+
+        return;
+    }
+
+    const outgoing = {
+        receiver: receiver,
+        command: command,
+        payload: payload
+    };
+
+    socket.send(JSON.stringify(outgoing));
+}
+
+function isValidCommand(receiver, command) {
+
+    if (!Object.values(Receiver).includes(receiver)) {
+        throw new Error(`Invalid receiver: ${receiver}`);
+    }
+    
+    const commands = ReceiverCommands[receiver];
+
+    if (!commands) {
+        return false;
+    }
+
+    return Object.values(commands).includes(command);
+}
+
+/*
 function sendRobotCommand(command) {
     console.log("Sending command:", command);
 
@@ -123,6 +195,14 @@ function sendRobotCommandWithValue(command, commandValue) {
 
     socket.send(JSON.stringify(payload));
 }
+
+*/
+
+window.sendCommand = sendCommand;
+window.Receiver = Receiver;
+window.VisionCommands = VisionCommands;
+window.CobotCommands = CobotCommands;
+window.CameraCommands = CameraCommands;
 
 let speedCommandTimer = null;
 let lastSentSpeedLevel = null;
@@ -183,3 +263,4 @@ loadConfig();
 loadLatestImage();
 
 setInterval(loadLatestImage, 5000);
+

@@ -49,19 +49,13 @@ class YoloOBBDetector:
 
     def detect(
         self,
-        image_path: str | Path,
+        image: np.ndarray | Path | str,
         save_visual: bool = False,
         visual_project_dir: str | Path | None = None,
         visual_name: str | None = None,
     ) -> list[OBBDetection]:
-
-        image_path = Path(image_path)
-
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-
+        
         predict_args = {
-            "source": str(image_path),
             "imgsz": self.imgsz,
             "conf": self.conf,
             "iou": self.iou,
@@ -70,12 +64,34 @@ class YoloOBBDetector:
             "verbose": False,
         }
 
+
+        #------------ image path handling --------------
+        if isinstance(image, (str, Path)):
+            image_path = Path(image)
+
+            if not image_path.exists():
+                raise FileNotFoundError(f"Image not found: {image_path}")
+
+            predict_args["source"] = str(image_path)
+
+        #------------- numpy array handling -----------------------
+
+        elif isinstance(image, np.ndarray):
+            predict_args["source"] = image
+
+        else:
+            raise TypeError("Input must be image path or numpy array")
+
+
+    
+
+        #add output directories
         if save_visual and visual_project_dir is not None:
             predict_args["project"] = str(visual_project_dir)
-
         if save_visual and visual_name is not None:
             predict_args["name"] = visual_name
 
+        #actually run model
         results = self.model.predict(**predict_args)
 
         detections: list[OBBDetection] = []

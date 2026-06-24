@@ -14,23 +14,20 @@
             <section class="card robot-card">
                 <h2>Robot Commands</h2>
 
-                <div class="button-row">
-                    <button type="button" onclick="sendRobotCommand('start_robot')" class="start">
-                        Start
-                    </button>
+                <button type="button" onclick="sendCommand(Receiver.CAMERA,CameraCommands.SNAPSHOT)" class="start">
+                    Start
+                </button>
 
-                    <button type="button" onclick="sendRobotCommand('calibrate_robot')" class="start">
-                        Calibrate
-                    </button>
+                <button type="button" onclick="sendCommand(Receiver.COBOT,CobotCommands.CALIBRATE)" class="start">
+                    Calibrate
+                </button>
 
-                     <button type="button" onclick="sendRobotCommand('retake_photo')" class="start">
-                        Retake Photo
-                    </button>
+                <button type="button" onclick="sendCommand(Receiver.COBOT,CobotCommands.STOP)" class="danger">
+                    Stop
+                </button>
 
-                    <button type="button" onclick="sendRobotCommand('stop_robot')" class="danger">
-                        Stop
-                    </button>
-                </div>
+                <p id="robot_command_status"></p>
+
 
                 <div class="speed-control">
                     <h3>Cobot Speed</h3>
@@ -76,6 +73,6 @@
         </div>
     </main>
 
-    <script src="/static/app.js?v=4"></script>
+    <script type="module" src="/static/app.js?v=3"></script>
 </body>
 </html>

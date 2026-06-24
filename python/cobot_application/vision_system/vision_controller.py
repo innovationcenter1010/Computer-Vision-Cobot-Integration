@@ -1,52 +1,70 @@
+import cv2
+import numpy as np
+
 import asyncio
-from cobot_application.shared_data import Py_network, Config, sender_ID, P2P_command
+
+from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, vision_commands, cobot_commands
 from cobot_application.vision_system.run_operation_scan import run_YOLO
+from cobot_application.camera.preprocessing import RGBDImage, convert_to_image_bytes
 
 
 class Vision_Controller():
     def __init__(self,network: Py_network,configurations):
         self.network = network
-        self.command_queue = network.vision_commands
+        self.id = package_ID.vision_id
+        self.command_queue = network.command_queues[self.id.value]
         self.configurations = configurations
-        self.id = sender_ID.vision_id
+
+        self.command_map = {
+
+            vision_commands.detect: self.scan,
+            #vision_commands.convert_to_jpeg_bytes: self.convert_to_jpeg_bytes
+
+        }
+
         print("vision system awake",flush=True)
 
     async def loop(self):
         while True:
             print("Vision waiting for command...", flush=True)
 
-            command = await self.command_queue.get()
+            #wait for a command to come in
+            command: P2P_command = await self.command_queue.get()
 
-            print("Vision command received", flush=True)
-
-            try:
-                if command.message=="start_vision":
-                    print("Starting YOLO scan...", flush=True)
-
-                    detections = await asyncio.to_thread(
-                        run_YOLO,
-                        self.configurations.as_dict()["vision_system"]
-                    )
-
-                    print("YOLO scan complete", flush=True)
-                    print("Detections:", detections, flush=True)
-
-
-                    layer_command = P2P_command(
-                        sender_ID=self.id,
-                        receiver_ID=sender_ID.cobot_id,
-                        message="pickup",
-                        value=detections
-                    )
-
-                    await self.network.cobot_commands.put(layer_command)
-
-                else:
-                    print("Unknown vision command:", command.message, flush=True)
-
-            except Exception as e:
-                print("Vision loop error:", e, flush=True)
-
-            await asyncio.sleep(0.1)
-
+            #map the command from the command map to run the actual function
+            handle = self.command_map.get(command.message)
             
+            #only run the command if it is properly mapped
+            if handle: await handle(command)
+
+            else: raise RuntimeError("Unknown command:", command.message)
+
+
+
+    async def scan(self, command: P2P_command):
+
+        print("Starting YOLO scan...", flush=True)
+
+        detections = await asyncio.to_thread(
+            run_YOLO,
+            None,
+            self.configurations.as_dict()["vision_system"]
+        )
+
+        print("YOLO scan complete", flush=True)
+        print("Detections:", detections, flush=True)
+
+
+        layer_command = P2P_command(
+            sender_ID=self.id,
+            receiver_ID=package_ID.cobot_id,
+            message=cobot_commands.pick_layer,
+            value=detections
+        )
+
+        await self.network.send(layer_command)
+
+
+
+
+

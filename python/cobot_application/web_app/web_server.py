@@ -5,8 +5,18 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 import json
 
-from cobot_application.shared_data import sender_ID
-from .webpage_controller import Webpage_Controller
+from python.cobot_application.shared_data import package_ID,vision_commands,cobot_commands,camera_commands
+#from .webpage_controller import Webpage_Controller
+
+
+#-------- maps for type conversions ----------
+
+receiver_map = {
+    "COBOT": package_ID.cobot_id,
+    "VISION": package_ID.vision_id,
+    "CAMERA": package_ID.camera_id,
+}
+
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -37,7 +47,7 @@ RESULTS_DIR = find_results_dir()
 def create_web_app(network, configurations):
     app = FastAPI()
 
-    web_controller = Webpage_Controller(network)
+    #web_controller = Webpage_Controller(network)
     config_path = Path(configurations.path)
 
     app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -87,43 +97,10 @@ def create_web_app(network, configurations):
         newest = max(image_files, key=lambda p: p.stat().st_mtime)
         return {"image": f"/results/{newest.name}"}
 
-    async def handle_web_command(command: str, value=None):
+    async def handle_web_command(reciver: str, command: str, value = None):
         print("Web command received:", command, flush=True)
 
-        if command == "stop_robot":
-            return await web_controller.send_command(
-                receiver_ID=sender_ID.cobot_id,
-                message="stop_robot",
-                value=value
-            )
 
-        if command == "start_robot":
-            return await web_controller.send_command(
-                receiver_ID=sender_ID.cobot_id,
-                message="start_robot",
-                value=value
-            )
-
-        if command == "calibrate_robot":
-            return await web_controller.send_command(
-                receiver_ID=sender_ID.cobot_id,
-                message="calibrate_robot",
-                value=value
-            )
-
-        if command == "capture_image":
-            return await web_controller.send_command(
-                receiver_ID=sender_ID.camera_id,
-                message="capture_image",
-                value=value
-            )
-
-        if command == "run_detection":
-            return await web_controller.send_command(
-                receiver_ID=sender_ID.vision_id,
-                message="run_detection",
-                value=value
-            )
 
         return {
             "ok": False,
@@ -146,10 +123,11 @@ def create_web_app(network, configurations):
                 data = await websocket.receive_json()
                 print("WebSocket data:", data, flush=True)
 
+                reciver = data.get("reciver")
                 command = data.get("command")
-                value = data.get("value")
+                payload = data.get("payload")
 
-                result = await handle_web_command(command, value)
+                result = await handle_web_command(reciver,command,payload)
 
                 await websocket.send_json({
                     "type": "command_result",

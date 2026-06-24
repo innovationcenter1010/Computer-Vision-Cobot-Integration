@@ -18,6 +18,11 @@ services:
       - "8000:8000"
     volumes:
       - ./vision_workspace:/app/vision_workspace
+
+    privileged: true
+
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
   
 
     command: ["python3", "-m", "cobot_application.main"]

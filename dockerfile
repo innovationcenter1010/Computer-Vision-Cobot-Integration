@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
     libxrender1 \
+    usbutils \
     && rm -rf /var/lib/apt/lists/*
 
 # =========================================================
@@ -36,6 +37,7 @@ RUN pip3 install --break-system-packages \
     "uvicorn[standard]" \
     jinja2
 
+
 # =========================================================
 # Copy python project toml
 # =========================================================
@@ -49,6 +51,7 @@ COPY python/pyproject.toml /tmp/python/pyproject.toml
 
 COPY . /app
 
+#comile the python code
 RUN pip3 install --break-system-packages -e ./python
 
 # =========================================================
