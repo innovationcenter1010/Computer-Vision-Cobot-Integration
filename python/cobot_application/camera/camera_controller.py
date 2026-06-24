@@ -17,6 +17,11 @@ class Camera_Controller():
 
         self.camera_stream = CameraStream()
 
+        print("Waiting for first frames...")
+        self.camera_stream.wait_for_color()
+        self.camera_stream.wait_for_depth()
+        print("Streams live.")
+
 
 
         # camera command map
