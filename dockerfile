@@ -70,7 +70,6 @@ RUN mkdir -p build && cd build && \
 # Python dependencies
 # =========================================================
 
-RUN pip3 install --break-system-packages --no-cache-dir -e ./python
 
 # =========================================================
 # Runtime environment

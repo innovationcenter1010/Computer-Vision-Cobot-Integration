@@ -1,5 +1,5 @@
 import asyncio
-from cobot_application.camera import astra_cpp
+#from cobot_application.camera import astra_cpp
 import numpy as np
 
 from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, camera_commands, vision_commands, web_commands
@@ -43,25 +43,21 @@ class Camera_Controller():
             else: raise RuntimeError("Unknown command:", command.message)
 
 
-    async def stream(self):
-        while True:
-            await self.send_image_to_web()
-            await asyncio.sleep(1)
-
 
 
     async def snapshot(self, command: P2P_command):
 
-        outgoing_frame = DualFrame()
         
-        outgoing_frame.depth_frame = self.camera_stream.latest_depth
-        outgoing_frame.color_frame = self.camera_stream.latest_color
+        depth_frame = self.camera_stream.latest_depth
+        color_frame = self.camera_stream.latest_color
+
+        outgoing_frame = DualFrame(color_frame=color_frame,depth_frame=depth_frame)
 
 
         snapshot_command = P2P_command(
-            receiver_ID= command.sender_ID,
+            receiver_ID= package_ID.web_id,
             sender_ID=package_ID.camera_id,
-            message=vision_commands.convert_to_jpeg,
+            message=web_commands.update_image,
             value=outgoing_frame
         )
 

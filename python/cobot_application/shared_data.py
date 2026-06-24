@@ -31,8 +31,8 @@ class package_ID(Enum):
 
 ## library for commands that can be sent to each system
 class vision_commands(Enum):
-    detect = auto()
-    convert_to_jpeg = auto()
+    detect = 1
+    convert_to_jpeg = 2
 
 class cobot_commands(Enum):
     pick_layer = auto()

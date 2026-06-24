@@ -7,7 +7,6 @@ import asyncio
 
 from python.cobot_application.shared_data import Py_network, Config, package_ID, P2P_command, vision_commands, cobot_commands, camera_commands
 from cobot_application.vision_system.run_operation_scan import run_YOLO
-from cobot_application.camera.preprocessing import RGBDImage, convert_to_image_bytes
 
 
 class Vision_Controller():
@@ -19,8 +18,8 @@ class Vision_Controller():
 
         self.command_map = {
 
-            vision_commands.detect: self.scan,
-            vision_commands.convert_to_jpeg: self.convert_to_jpeg_bytes
+            vision_commands.detect.value: self.scan,
+            vision_commands.convert_to_jpeg.value: self.convert_to_jpeg
 
         }
 
@@ -34,7 +33,7 @@ class Vision_Controller():
             command: P2P_command = await self.command_queue.get()
 
             #map the command from the command map to run the actual function
-            handle = self.command_map.get(command.message)
+            handle = self.command_map.get(command.message.value)
             
             #only run the command if it is properly mapped
             if handle: await handle(command)
@@ -66,9 +65,7 @@ class Vision_Controller():
 
         await self.network.send(layer_command)
 
-    def convert_to_jpeg(self,command: P2P_command = None):
-
-
+    async def convert_to_jpeg(self,command):
 
         output_dir="snapshots"
 
