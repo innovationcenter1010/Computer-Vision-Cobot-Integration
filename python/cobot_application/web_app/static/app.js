@@ -80,11 +80,8 @@ function connectWebSocket() {
 
         if (data.type === "camera_frame") {
 
-        rgbImage.src =
-            "data:image/jpeg;base64," + data.rgb;
-
-        depthImage.src =
-            "data:image/jpeg;base64," + data.depth;
+            document.getElementById("rgb_image").src = "data:image/jpeg;base64," + data.rgb;
+            document.getElementById("depth_image").src = "data:image/jpeg;base64," + data.depth;
 
         return;
     }
@@ -260,7 +257,6 @@ function sendSpeedCommand() {
 
 connectWebSocket();
 loadConfig();
-loadLatestImage();
 
-setInterval(loadLatestImage, 5000);
+
 

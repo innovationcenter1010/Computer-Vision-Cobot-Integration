@@ -16,6 +16,8 @@ services:
 
     ports:
       - "8000:8000"
+      - "5550:5550"
+      - "5551:5551"
     volumes:
       - ./vision_workspace:/app/vision_workspace
 

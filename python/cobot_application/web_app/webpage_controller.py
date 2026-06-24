@@ -2,6 +2,8 @@ import asyncio
 import json
 from pathlib import Path
 import base64
+import numpy as np
+import cv2
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -10,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from python.cobot_application.shared_data import P2P_command, package_ID, Py_network, COMMAND_REGISTRY, web_commands
-
+from python.cobot_application.camera.camera_streamer import DualFrame, Frame
 
 
 #-------- maps for type conversions from js ----------
@@ -144,7 +146,7 @@ class Webpage_Controller:
                 print("Using results path:", path, flush=True)
                 return path
 
-        return results_path
+        return None
     
     async def run_server(self):
         print("Starting webpage server...", flush=True)
@@ -158,28 +160,6 @@ class Webpage_Controller:
 
         server = uvicorn.Server(config)
         await server.serve() 
-
-        await asyncio.gather(
-            server.serve(),
-            self.web_message_loop()
-        )
-
-    async def web_message_loop(self):
-        while True:
-            command = await self.network.web_commands.get()
-
-            print(
-                "Webpage received reverse message:",
-                command.message,
-                command.value,
-                flush=True
-            )
-
-            await self.broadcast_to_clients({
-                "type": command.message,
-                "sender": str(command.sender_ID),
-                "message": command.value
-            })
 
     async def broadcast_to_clients(self, payload):
         disconnected_clients = []
@@ -195,49 +175,62 @@ class Webpage_Controller:
                 self.connected_clients.remove(websocket)
 
     async def loop(self):
-        print("Vision waiting for command...", flush=True)
+        while True:
+            print("Vision waiting for command...", flush=True)
 
-        #wait for a command to come in
-        command: P2P_command = await self.command_queue.get()
+            #wait for a command to come in
+            command: P2P_command = await self.command_queue.get()
 
-        #map the command from the command map to run the actual function
-        handle = self.command_map.get(command.message)
-        
-        #only run the command if it is properly mapped
-        if handle: await handle(command)
+            #map the command from the command map to run the actual function
+            handle = self.command_map.get(command.message)
+            
+            #only run the command if it is properly mapped
+            if handle: await handle(command)
 
-        else: raise RuntimeError("Unknown command:", command.message)
+            else: raise RuntimeError("Unknown command:", command.message)
 
     async def update_image(self, command: P2P_command):
 
-        rgb_bytes = command.value["rgb"]
-        depth_bytes = command.value["depth"]
+        dual_frame: DualFrame = command.value
 
-        message = {
+        color_frame = dual_frame.color_frame
+        depth_frame = dual_frame.depth_frame
+
+        def encode(frame: Frame):
+            if frame is None or frame.data is None:
+                return None
+
+            img = frame.data
+
+            # ensure valid image format
+            if img.dtype != np.uint8:
+                img = np.clip(img, 0, 255).astype(np.uint8)
+
+            # encode as JPEG
+            ok, buffer = cv2.imencode(".jpg", img)
+            if not ok:
+                return None
+
+            return base64.b64encode(buffer).decode("ascii")
+
+        payload = {
             "type": "camera_frame",
-            "rgb": base64.b64encode(rgb_bytes).decode("ascii"),
-            "depth": base64.b64encode(depth_bytes).decode("ascii"),
+            "rgb": encode(color_frame),
+            "depth": encode(depth_frame),
         }
 
-        disconnected = []
+        disconnected = set()
 
-        for websocket in self.websockets:
-
+        for ws in self.connected_clients:
             try:
-                await websocket.send_json(message)
+                await ws.send_json(payload)
 
             except Exception as e:
+                print(f"[ws] failed to send image: {e}", flush=True)
+                disconnected.add(ws)
 
-                print(
-                    f"Failed to send image to websocket: {e}",
-                    flush=True
-                )
-
-                disconnected.append(websocket)
-
-        for websocket in disconnected:
-            self.websockets.discard(websocket)
-
+        for ws in disconnected:
+            self.connected_clients.remove(ws)
 
 
     async def handle_web_command(self, receiver: str,command: str,payload: str):
