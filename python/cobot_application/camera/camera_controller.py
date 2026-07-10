@@ -1,4 +1,5 @@
 import asyncio
+from time import time
 #from cobot_application.camera import astra_cpp
 import numpy as np
 
@@ -24,7 +25,10 @@ class Camera_Controller():
         self.camera_stream.wait_for_depth()
         print("Streams live.")
 
-        save_dual_frame(DualFrame(self.camera_stream.latest_depth,self.camera_stream.latest_color))
+        for x in range(100):
+            print("Saving frame",flush=True)
+            save_dual_frame(DualFrame(self.camera_stream.latest_depth,self.camera_stream.latest_color))
+            time.sleep(10)
 
 
 

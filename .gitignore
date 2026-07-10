@@ -1,43 +1,50 @@
-# Byte-compiled / optimized / DLL objects
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# C extensions
-#*.so
-
-# Distribution / packaging
-.Python
+# =============================================================
+# .dockerignore
+# Keep the build context lean. Only what the Dockerfile
+# explicitly COPYs should be allowed through.
+# =============================================================
+ 
+# --- Version control ---
+.git
+.gitmodules
+.gitignore
+ 
+# --- IDE / local tooling ---
+.vscode
+cmake-build-debug
+cmake-build-release
+ 
+# --- C++ build output (builder stage handles this itself) ---
 build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-#lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Virtual Environments
-.venv/
-venv/
-ENV/
-env/
-
-# Testser
-
-*test.jpg
-*test.jpeg
-*test.json
-*detections.jpg
-*detections.jpeg
-*log.txt
+ 
+# --- Pybind — exclude heavy docs/tests/CI, keep include + tools ---
+cpp/third_party/pybind/docs/
+cpp/third_party/pybind/tests/
+cpp/third_party/pybind/.github/
+ 
+# --- AstraSDK — exclude samples and java bindings ---
+cpp/third_party/AstraSDK/samples/
+cpp/third_party/AstraSDK/java/
+cpp/third_party/AstraSDK/bin/
+ 
+# --- Python cache ---
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+ 
+# --- Vision workspace: exclude everything except the models we need ---
+vision_workspace/calibration/
+vision_workspace/datasets/
+vision_workspace/operation/
+ 
+# Training run checkpoints — only cans_obb_best.pt is copied explicitly
+vision_workspace/models/training_runs/
+ 
+# --- Docs ---
+docs/
+ 
+# --- SVGs ---
+*.svg
+ 
+# --- Test fixtures ---
+python/tests/

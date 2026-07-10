@@ -11,8 +11,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from python.cobot_application.shared_data import P2P_command, package_ID, Py_network, COMMAND_REGISTRY, web_commands
-from python.cobot_application.camera.camera_streamer import DualFrame, Frame
+from python.cobot_application.shared_data import P2P_command, camera_commands, package_ID, Py_network, COMMAND_REGISTRY, web_commands
+from python.cobot_application.camera.camera_streamer import DualFrame, Frame, FrameProvider
 
 
 #-------- maps for type conversions from js ----------
@@ -120,9 +120,20 @@ class Webpage_Controller:
 
         self.setup_routes()
 
+        self.viewer = None
+
+        get_viewer_command = P2P_command(
+            sender_ID=self.id,
+            receiver_ID=package_ID.camera_id,
+            message=camera_commands.get_stream_provider,
+            value = self.viewer
+        )
+
+        self.network.send(get_viewer_command)
+
 
         self.command_map = {
-            web_commands.update_image: self.update_image
+            web_commands.update_image: self.update_image,
         }
 
 
