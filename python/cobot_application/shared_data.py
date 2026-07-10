@@ -42,6 +42,7 @@ class cobot_commands(Enum):
 
 class camera_commands(Enum):
     snapshot = auto()
+    get_stream_provider = auto()
 
 class web_commands(Enum):
     refresh = auto()
