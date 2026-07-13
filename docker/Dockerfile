@@ -108,7 +108,9 @@ WORKDIR /ws
 COPY --from=builder /ws/install /ws/install
 
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Strip CRs in case the file was checked out with Windows line endings —
+# a CRLF shebang breaks exec ("/usr/bin/env: 'bash\r': No such file").
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # ---- Environment ----
 # NOTE: model weights are NOT baked — the vision_workspace bind mount is the
