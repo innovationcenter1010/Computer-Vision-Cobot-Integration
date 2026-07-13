@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cobot_vision</name>
+  <version>0.1.0</version>
+  <description>
+    Vision pipeline, split into two nodes:
+      yolo_node          — pure perception: YOLO-OBB on the latest color frame,
+                           publishes pixel-space detections. Only importer of
+                           ultralytics (pip dependency, no rosdep key).
+      localization_node  — pure geometry: homography px→mm, rz from corners,
+                           real_z measured from the depth stream, snake pick
+                           ordering. Also serves the cheap tier-1 depth checks
+                           (VerifyTarget, GetLayerHeight).
+    train_yolo_obb.py is an offline tool, not a node.
+  </description>
+  <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>cobot_interfaces</depend>
+
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <!-- ultralytics: pip-only (no rosdep key) — installed in the Docker image -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

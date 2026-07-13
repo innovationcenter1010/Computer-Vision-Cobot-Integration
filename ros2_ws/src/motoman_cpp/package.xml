@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>motoman_cpp</name>
+  <version>0.1.0</version>
+  <description>
+    pybind11 extension wrapping the Motoman YMConnect SDK.
+    NOT a ROS node — a plain Python extension module installed into
+    site-packages so cobot_control can `import motoman_cpp` exactly as the
+    legacy application did. Sources copied from cpp/src (cpp/ tree can be
+    retired once this build is verified).
+  </description>
+  <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <build_depend>pybind11_vendor</build_depend>
+  <build_depend>python3-dev</build_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

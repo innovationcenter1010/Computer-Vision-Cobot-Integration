@@ -66,6 +66,8 @@ class YoloOBBDetector:
 
 
         #------------ image path handling --------------
+        image_path = None  # stays None for in-memory (numpy) input
+
         if isinstance(image, (str, Path)):
             image_path = Path(image)
 
@@ -129,7 +131,7 @@ class YoloOBBDetector:
                         normalized_corners=norm_box.tolist(),
                         center_x=center_x,
                         center_y=center_y,
-                        image_path=str(image_path),
+                        image_path=str(image_path) if image_path is not None else None,
                     )
                 )
 

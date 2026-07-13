@@ -1,0 +1,54 @@
+# All runtime-tunable parameters for the bin-picking stack.
+# Replaces the legacy config.JSON shared Config object (see
+# docs/ros2_architecture.md §6). Values migrated from legacy/config.JSON.
+#
+# Structured data (place trajectories) lives in trajectories.json, referenced
+# by cobot_node.trajectories_file — launch resolves it to the installed share
+# path unless overridden.
+
+camera_node:
+  ros__parameters:
+    color_endpoint: "tcp://host.docker.internal:5550"
+    depth_endpoint: "tcp://host.docker.internal:5551"
+    publish_rate_hz: 15.0
+
+yolo_node:
+  ros__parameters:
+    model_path: "/ws/vision_workspace/models/cans_obb_best.pt"
+    confidence: 0.50
+    iou: 0.4
+    max_detections: 20
+    image_size: 640
+    remove_duplicates: true
+    duplicate_center_distance_px: 50.0
+
+localization_node:
+  ros__parameters:
+    # Flattened 4x2 corners, order TL, TR, BR, BL (from legacy bin_configs)
+    image_corners: [3744.0, 1178.0, 4114.0, 4524.0, 492.0, 4408.0, 904.0, 1241.0]
+    real_world_corners_mm: [448.22, -1600.0, -677.22, -1600.0, -677.22, -565.96, 448.22, -565.96]
+    can_height_mm: 87.0
+    pathing_row_tolerance_mm: 50.0
+    depth_buffer_size: 15
+    depth_sample_window_px: 10
+    verify_tolerance_mm: 40.0
+    # Depth reading (mm) when the top layer is present. 0.0 = uncalibrated:
+    # get_layer_height returns layer_index=-1 until measured on hardware.
+    depth_at_top_layer_mm: 0.0
+
+cobot_node:
+  ros__parameters:
+    robot_ip: "192.168.1.31"
+    tool_head_length_mm: 620.0
+    tool_head_xy_offset: 0.0
+    tool_head_compression_distance_mm: 50.0
+    # trajectories_file is injected by robot.launch.py (share path);
+    # set it here only to override.
+
+web_node:
+  ros__parameters:
+    port: 8000
+    web_stream_hz: 5.0
+    results_dir: "/ws/vision_workspace/operation/results"
+    # params_file is injected by robot.launch.py so /api/config edits
+    # persist to this file.

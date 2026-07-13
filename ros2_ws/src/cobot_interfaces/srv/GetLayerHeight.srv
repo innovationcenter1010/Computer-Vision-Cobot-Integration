@@ -1,0 +1,8 @@
+# Tier-1 sensing: median depth over the bin ROI → which layer is on top?
+# Replaces the legacy 70%-count layer-completion heuristic (bin.py) with a
+# measurement. Served by localization_node; called by cobot_node when a
+# layer's targets are exhausted.
+
+---
+float64 median_z      # median depth over the bin ROI, mm
+int8 layer_index      # nearest layer number derived from can_height_mm; -1 if unknown

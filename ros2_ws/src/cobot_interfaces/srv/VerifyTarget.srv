@@ -1,0 +1,8 @@
+# Tier-1 sensing (cheap, no ML): is a can still present at this target?
+# Served by localization_node from the live depth stream; called by
+# cobot_node before committing the gripper to a pick.
+
+CanTarget target
+---
+bool present
+float64 measured_z    # depth reading at the target center, mm

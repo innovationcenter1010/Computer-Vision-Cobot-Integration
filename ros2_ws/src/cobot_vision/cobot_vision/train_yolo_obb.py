@@ -3,8 +3,6 @@ import shutil
 
 from ultralytics import YOLO
 
-from python.cobot_application.shared_data import Config
-
 
 # =========================================================
 # Hardcoded project paths
@@ -90,13 +88,19 @@ def train_yolo_obb(
 
 def main():
     """
-    Allows this file to be run directly for testing/training:
+    Offline training tool (NOT a ROS node). Run directly:
 
-        python3 -m cobot_application.vision_system.train_yolo_obb
+        python3 -m cobot_vision.train_yolo_obb
     """
 
-    configurations = Config()
-    vision_configs = configurations.as_dict()["vision_system"]
+    # Training settings; formerly the vision_system section of config.JSON.
+    vision_configs = {
+        "YOLO_BASE_MODEL": "yolo26n-obb.pt",
+        "TRAINING_EPOCHS": 50,
+        "TRAINING_IMAGE_SIZE": 640,
+        "TRAINING_BATCH_SIZE": 1,
+        "TRAINING_DEVICE": "cpu",
+    }
 
     train_yolo_obb(
         vision_configs=vision_configs,

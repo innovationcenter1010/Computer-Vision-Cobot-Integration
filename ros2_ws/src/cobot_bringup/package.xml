@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cobot_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    Launch files and configuration for the full bin-picking stack.
+    robot.launch.py replaces the legacy main.py; config/cobot_params.yaml
+    replaces the shared Config object; config/trajectories.json holds the
+    structured place trajectories (referenced by cobot_node via path param).
+    Nothing may depend on this package.
+  </description>
+  <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>cobot_camera</exec_depend>
+  <exec_depend>cobot_vision</exec_depend>
+  <exec_depend>cobot_control</exec_depend>
+  <exec_depend>cobot_web</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

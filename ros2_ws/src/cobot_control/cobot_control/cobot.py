@@ -1,5 +1,4 @@
-from cobot_application.cobot import motoman_cpp
-from cobot_application.vision_system.yolo_obb_detector import OBBDetection
+import motoman_cpp  # pybind extension installed by the motoman_cpp package
 
 import asyncio
 import time
@@ -228,7 +227,9 @@ class Cobot:
 
     
 
-    async def pick_and_place(self, can: OBBDetection):
+    async def pick_and_place(self, can):
+        # `can` is anything with real_x / real_y / real_rz attributes —
+        # legacy OBBDetection or a cobot_interfaces/CanTarget message.
 
         pick_and_place_report = Cobot_Operation_Report("PICK AND PLACE REPORT")
         interpolation_offset = PositionOffset()

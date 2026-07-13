@@ -1,50 +1,36 @@
 # =============================================================
-# .dockerignore
-# Keep the build context lean. Only what the Dockerfile
-# explicitly COPYs should be allowed through.
+# .gitignore
+# (Note: .dockerignore is its own file — this one is for git.)
 # =============================================================
- 
-# --- Version control ---
-.git
-.gitmodules
-.gitignore
- 
-# --- IDE / local tooling ---
-.vscode
-cmake-build-debug
-cmake-build-release
- 
-# --- C++ build output (builder stage handles this itself) ---
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- colcon workspace artifacts (never commit build output) ---
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# --- Legacy C++ build output ---
 build/
- 
-# --- Pybind — exclude heavy docs/tests/CI, keep include + tools ---
-cpp/third_party/pybind/docs/
-cpp/third_party/pybind/tests/
-cpp/third_party/pybind/.github/
- 
-# --- AstraSDK — exclude samples and java bindings ---
-cpp/third_party/AstraSDK/samples/
-cpp/third_party/AstraSDK/java/
-cpp/third_party/AstraSDK/bin/
- 
-# --- Python cache ---
-**/__pycache__/
-**/*.pyc
-**/*.pyo
- 
-# --- Vision workspace: exclude everything except the models we need ---
-vision_workspace/calibration/
-vision_workspace/datasets/
-vision_workspace/operation/
- 
-# Training run checkpoints — only cans_obb_best.pt is copied explicitly
+cmake-build-debug/
+cmake-build-release/
+
+# --- IDE / local tooling ---
+.vscode/
+
+# --- Model weights (large binaries; vision_workspace mount is the source) ---
+*.pt
+*.engine
+
+# --- Vision workspace runtime output ---
+vision_workspace/operation/inbox/
+vision_workspace/operation/debug_images/
+vision_workspace/operation/results/
 vision_workspace/models/training_runs/
- 
-# --- Docs ---
-docs/
- 
-# --- SVGs ---
+
+# --- Misc ---
+outputs/
 *.svg
- 
-# --- Test fixtures ---
-python/tests/

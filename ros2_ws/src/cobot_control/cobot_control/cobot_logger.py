@@ -1,6 +1,6 @@
 from pathlib import Path
 from datetime import datetime
-from cobot_application.cobot.cobot import Cobot_Operation_Report
+from cobot_control.cobot import Cobot_Operation_Report
 
 
 def log_report(report: Cobot_Operation_Report,filename: str = "cobot_log.txt") -> Path:
