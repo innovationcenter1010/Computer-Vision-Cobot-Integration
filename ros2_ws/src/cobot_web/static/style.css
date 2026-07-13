@@ -113,7 +113,32 @@ button {
     border-radius: 6px;
 }
 
-@media (max-width: 800px) {
+/* --- live camera / depth feed --- */
+
+.feed-card {
+    grid-column: 1 / -1;   /* full-width row above the control cards */
+}
+
+.vision-item h3 {
+    margin: 0 0 6px;
+}
+
+.vision-item img {
+    min-height: 220px;
+    object-fit: contain;
+    background: #222;
+    border: 1px solid #ccc;
+}
+
+.stream-status {
+    margin: 0;
+    font-weight: bold;
+    color: #555;
+}
+
+/* --- controls --- */
+/* (was accidentally trapped in an unclosed @media block) */
+
 .button-row {
     display: flex;
     flex-wrap: wrap;

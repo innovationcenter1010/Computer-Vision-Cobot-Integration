@@ -11,6 +11,13 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
+
+# ament_cmake_python finds Python3 with the Interpreter component only.
+# pybind11 then skips its own Python discovery (Python3 already "found") and
+# calls python3_add_library, which is defined by the Development component —
+# so load it explicitly BEFORE pybind11.
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+
 find_package(pybind11_vendor REQUIRED)
 find_package(pybind11 REQUIRED)
 

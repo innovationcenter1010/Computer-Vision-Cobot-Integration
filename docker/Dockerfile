@@ -40,6 +40,14 @@ RUN pip3 install --no-cache-dir \
     pyzmq \
     jinja2
 
+# ---- 3b. build-tooling compat ----
+# The pip layers pull setuptools >=71 into /usr/local, which requires
+# packaging >=22; Ubuntu 22.04's system packaging is 21.3 and breaks every
+# `setup.py egg_info` with:
+#   canonicalize_version() got an unexpected keyword argument 'strip_trailing_zero'
+# Pin both. setuptools <80 keeps `setup.py install`, which colcon still uses.
+RUN pip3 install --no-cache-dir --upgrade "setuptools<80" "packaging>=22"
+
 WORKDIR /ws
 
 # ---- 4. rosdep layer: keyed on manifests only ----

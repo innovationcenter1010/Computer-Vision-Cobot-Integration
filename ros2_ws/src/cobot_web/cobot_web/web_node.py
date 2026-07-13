@@ -145,7 +145,10 @@ class WebNode(Node):
     def _stream_frames(self):
         if not self.ws_clients:
             return
-        self.broadcast(self._camera_frame_payload())
+        payload = self._camera_frame_payload()
+        if payload["rgb"] is None and payload["depth"] is None:
+            return  # nothing received from the camera yet
+        self.broadcast(payload)
 
     def _camera_frame_payload(self) -> dict:
         with self._frame_lock:

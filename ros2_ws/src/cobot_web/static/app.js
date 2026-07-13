@@ -1,15 +1,23 @@
 import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js";
 
 
+function setFieldValue(id, value) {
+    const element = document.getElementById(id);
+    if (element && value !== undefined && value !== null) {
+        element.value = value;
+    }
+}
+
 async function loadConfig() {
     const response = await fetch("/api/config");
     const config = await response.json();
 
-    document.getElementById("robot_ip").value = config.robot_ip;
-    document.getElementById("camera_ip").value = config.camera_ip;
-    document.getElementById("save_folder").value = config.save_folder;
-    document.getElementById("confidence_threshold").value = config.confidence_threshold;
-    document.getElementById("enable_motion").checked = config.enable_motion;
+    // Config is the bringup params YAML: {node_name: {ros__parameters: {...}}}
+    const cobotParams = config.cobot_node?.ros__parameters ?? {};
+    const yoloParams = config.yolo_node?.ros__parameters ?? {};
+
+    setFieldValue("robot_ip", cobotParams.robot_ip);
+    setFieldValue("confidence_threshold", yoloParams.confidence);
 }
 
 async function saveConfig() {
@@ -60,6 +68,44 @@ async function loadLatestImage() {
 
 let socket = null;
 
+// ------------------- live camera / depth feed -------------------
+
+let lastFrameTime = null;
+
+function setText(id, text) {
+    const element = document.getElementById(id);
+    if (element) element.innerText = text;
+}
+
+function updateFeedImage(id, base64Jpeg) {
+    if (!base64Jpeg) return; // keep the last good frame on screen
+    const img = document.getElementById(id);
+    if (img) img.src = "data:image/jpeg;base64," + base64Jpeg;
+}
+
+function handleCameraFrame(data) {
+    updateFeedImage("rgb_image", data.rgb);
+    updateFeedImage("depth_image", data.depth);
+
+    if (data.rgb || data.depth) {
+        lastFrameTime = Date.now();
+
+        let status = "live";
+        if (!data.rgb) status += " (no color)";
+        if (!data.depth) status += " (no depth)";
+        setText("stream_status", status);
+    }
+}
+
+// Mark the feed as stalled if frames stop arriving.
+setInterval(function () {
+    if (lastFrameTime !== null && Date.now() - lastFrameTime > 3000) {
+        setText("stream_status", "stream stalled");
+    }
+}, 1000);
+
+// -----------------------------------------------------------------
+
 function connectWebSocket() {
     const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
     socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws`);
@@ -74,20 +120,36 @@ function connectWebSocket() {
         console.log("WebSocket message:", data);
 
         if (data.type === "command_result") {
-            document.getElementById("robot_command_status").innerText =
-                data.result.message;
+            setText("robot_command_status", data.result.message);
+            return;
         }
 
         if (data.type === "camera_frame") {
+            handleCameraFrame(data);
+            return;
+        }
 
-            document.getElementById("rgb_image").src = "data:image/jpeg;base64," + data.rgb;
-            document.getElementById("depth_image").src = "data:image/jpeg;base64," + data.depth;
+        if (data.type === "cobot_status") {
+            setText(
+                "cobot_feedback",
+                "state: " + data.state + (data.detail ? " — " + data.detail : "")
+            );
+            return;
+        }
 
-        return;
-    }
+        if (data.type === "layer_report") {
+            setText(
+                "cobot_feedback",
+                "layer done: " + data.successes + " ok / " + data.failures +
+                " failed" + (data.overall_ok ? "" : " (FAILED)")
+            );
+            return;
+        }
 
-
-
+        if (data.type === "targets") {
+            setText("robot_command_status", "vision: " + data.count + " targets found");
+            return;
+        }
     };
 
     socket.onclose = function () {
