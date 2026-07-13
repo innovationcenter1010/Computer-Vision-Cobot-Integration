@@ -97,7 +97,8 @@ def order_obb_detections_by_real_position(
         if detection.real_x is None or detection.real_y is None:
             raise ValueError(
                 "Detection must have real_x and real_y before pathing. "
-                "Apply homography before calling order_obb_detections_by_real_position()."
+                "Apply the camera->robot calibration transform before calling "
+                "order_obb_detections_by_real_position()."
             )
 
         across_mm, down_mm = project_real_point_to_bin_axes(

@@ -7,5 +7,6 @@ float32 confidence
 
 float64 real_x
 float64 real_y
-float64 real_z      # measured from depth at the can center (mm)
+float64 real_z      # robot base-frame Z of the can top, from the fitted
+                    # camera->robot calibration + depth at the can center (mm)
 float64 real_rz     # rotation about z, degrees

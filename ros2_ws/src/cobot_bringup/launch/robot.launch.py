@@ -24,6 +24,9 @@ def generate_launch_description():
     bringup_share = Path(get_package_share_directory("cobot_bringup"))
     params_file = str(bringup_share / "config" / "cobot_params.yaml")
     trajectories_file = str(bringup_share / "config" / "trajectories.json")
+    # Written by the calibration routine; lives in the bind-mounted config dir
+    # so it survives container rebuilds. Missing file = not calibrated.
+    calibration_file = str(bringup_share / "config" / "calibration.yaml")
 
     args = [
         DeclareLaunchArgument("camera", default_value="true"),
@@ -57,7 +60,7 @@ def generate_launch_description():
             package="cobot_vision",
             executable="localization_node",
             name="localization_node",
-            parameters=[params_file],
+            parameters=[params_file, {"calibration_file": calibration_file}],
             condition=IfCondition(LaunchConfiguration("vision")),
             respawn=True,
             respawn_delay=2.0,

@@ -1,0 +1,11 @@
+# "The marker is parked here — take your measurements."
+# Called by cobot_node at each calibration pose; served by localization_node,
+# which finds the dot (/vision/locate_dot), samples its own depth buffer, adds
+# the configured marker offset, and stores the matched sample pair.
+float64 x             # commanded TCP position, robot base frame, mm
+float64 y
+float64 z
+---
+bool success          # a usable sample was recorded
+int32 sample_count    # samples accumulated so far this run
+string message        # why it failed (dot not seen / no depth / ...)

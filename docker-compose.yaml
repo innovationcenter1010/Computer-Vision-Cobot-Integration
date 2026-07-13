@@ -23,6 +23,10 @@ services:
     volumes:
       # Model weights + scan results (source of truth, never baked)
       - ./vision_workspace:/ws/vision_workspace
+      # Saved camera frames (/camera/save_frames). Nested inside the mount
+      # above — listed explicitly so the capture path is visible here and the
+      # host directory is created before the first save.
+      - ./vision_workspace/operation/captures:/ws/vision_workspace/operation/captures
       # Params editable without an image rebuild; /api/config writes here
       - ./ros2_ws/src/cobot_bringup/config:/ws/install/share/cobot_bringup/config
 

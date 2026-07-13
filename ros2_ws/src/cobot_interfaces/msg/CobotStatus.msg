@@ -5,6 +5,7 @@ uint8 STATE_IDLE = 1
 uint8 STATE_PICKING = 2
 uint8 STATE_STOPPING = 3
 uint8 STATE_ERROR = 4
+uint8 STATE_CALIBRATING = 5
 
 std_msgs/Header header
 

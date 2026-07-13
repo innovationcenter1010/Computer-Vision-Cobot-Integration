@@ -107,6 +107,9 @@ become publisher calls.
 - Pixel-distance duplicate removal (`remove_duplicate_detections`) happens here
 - Takes: `yolo_obb_detector.py`, annotated-image saving. `train_yolo_obb.py` remains an
   **offline tool**, not a node.
+- Service `/vision/locate_dot` (`LocateDot`) — finds the red calibration marker with a
+  second model (`red_dot_best.pt`), lazy-loaded on first call so normal startup stays fast.
+  Accepts either detection head (OBB or axis-aligned boxes). See §10.
 - Only node that imports `ultralytics` — the heavy dependency stays quarantined
 - Upgrade path: promote `/vision/scan` to an action only if progress/cancel is ever needed
 
@@ -117,18 +120,22 @@ become publisher calls.
 - On detections: pick the depth frame nearest the detection stamp (start with "latest" —
   the scene is static during a scan; nearest-stamp is a drop-in upgrade since the stamp is
   already carried)
+- **Requires a fitted camera→robot calibration** (`calibration.yaml`, see §10). Uncalibrated
+  → detections are dropped with a loud log and `verify_target` errors. There is deliberately
+  no homography fallback: an unmeasured transform must not move the robot.
 - Per detection:
-  - homography px→real x/y (`homography.py`)
-  - `real_rz` from OBB corners (`rotation.py`)
-  - **`real_z` measured from the depth image at the can center** — replaces the hardcoded
-    `LAYER_Z1..Z7` table (flagged "NOT MEASURED YET" in legacy config). Optionally snap to
-    the nearest multiple of `can_height_mm` for noise robustness.
+  - depth at the can center + fitted transform → real x/y/z (`calibration.py`) — one
+    consistent 3D model replaces the legacy planar homography AND the hardcoded
+    `LAYER_Z1..Z7` table
+  - `real_rz` from OBB corners (`rotation.py`), corners mapped through the same transform
   - pick ordering (`pathing.py` — lives here because ordering is done in real space)
 - Publishes `/vision/targets` (`CanTargetArray`) — consumed by `cobot_node` (pick trigger)
   and `web_node` (display)
 - Services (cheap depth reads, no ML — see §5):
   - `/vision/verify_target` — is a can still at (x, y), and at what measured z?
   - `/vision/get_layer_height` — median depth over the bin ROI → current layer index
+- Calibration math services (`cobot_node` drives the robot between calls — see §10):
+  - `/vision/calibration_begin` · `/vision/calibration_sample` · `/vision/calibration_compute`
 
 ### 3.4 `cobot_node` (pkg `cobot_control`) — single node, Python, pybind
 
@@ -137,11 +144,15 @@ controller — direct descendant of the legacy `command_map`:
 
 - Subscribes `/vision/targets` → dispatches `pick_layer(targets)`
 - Services `/cobot/start`, `/cobot/stop`, `/cobot/calibrate` (`std_srvs/Trigger`)
-- Service clients: `/vision/scan`, `/vision/verify_target`, `/vision/get_layer_height`
-  (the controller decides *when* to sense — see §5)
-- Publishes `/cobot/status` (`CobotStatus`: idle / picking / stopped / error) and
-  `/cobot/layer_report` (`LayerReport`, replacing the printed `Layer_Report`)
-- One-operation-at-a-time guard (busy flag); a target array arriving mid-pick is rejected
+- `/cobot/calibrate` runs the calibration **movement loop** (§10): step the marker through
+  the configured pose grid, calling `/vision/calibration_sample` at each stop and
+  `/vision/calibration_compute` at the end — movements here, math in localization
+- Service clients: `/vision/scan`, `/vision/verify_target`, `/vision/get_layer_height`,
+  `/vision/calibration_*` (the controller decides *when* to sense — see §5)
+- Publishes `/cobot/status` (`CobotStatus`: idle / picking / stopping / calibrating / error)
+  and `/cobot/layer_report` (`LayerReport`, replacing the printed `Layer_Report`)
+- One-operation-at-a-time guard (busy flag) held for a whole layer or a whole calibration
+  run; a target array arriving mid-operation is rejected
 - **`stop` lives in its own callback group** so it is reachable while a pick runs — the one
   place ROS threading genuinely matters here
 - Owns the **bin state machine** (layer index, `BIN_COMPLETE`) — pick-sequencing state is
@@ -177,6 +188,8 @@ msg/CobotStatus.msg         # state enum + detail string
 msg/LayerReport.msg         # successes, failures, overall_ok
 srv/VerifyTarget.srv        # CanTarget → bool present, float64 measured_z
 srv/GetLayerHeight.srv      # (bin ROI from params) → float64 median_z, int8 layer_index
+srv/LocateDot.srv           # () → found, dot center px (u, v), confidence     (§10)
+srv/CalibrationSample.srv   # commanded TCP (x, y, z) → success, sample_count  (§10)
 ```
 
 Everything else uses stock types: `sensor_msgs/Image`, `std_srvs/Trigger`. The pixel/robot
@@ -271,10 +284,13 @@ yolo_node:
 
 localization_node:
   ros__parameters:
-    image_corners: [3744.0,1178.0, 4114.0,4524.0, 492.0,4408.0, 904.0,1241.0]
-    real_world_corners_mm: [448.22,-1600.0, -677.22,-1600.0, -677.22,-565.96, 448.22,-565.96]
+    # Spatial setup data lives HERE, never as code defaults (defaults are
+    # zeros = unconfigured; dependent features refuse to run until set).
+    bin_image_corners_px: [3744.0,1178.0, 4114.0,4524.0, 492.0,4408.0, 904.0,1241.0]
+    bin_corners_mm: [448.22,-1600.0, -677.22,-1600.0, -677.22,-565.96, 448.22,-565.96]
     can_height_mm: 87.0
     pathing_row_tolerance_mm: 50.0
+    marker_offset_mm: [0.0, 0.0, 0.0]   # measured after mounting the dot (§10)
 
 cobot_node:
   ros__parameters:
@@ -476,7 +492,8 @@ an image rebuild.
 | `camera/camera_streamer.py` | `cobot_camera` (endpoints become params) |
 | `camera/frame_saver.py` | `cobot_camera` (optional save service, later) |
 | `vision_system/yolo_obb_detector.py` | `cobot_vision` / yolo_node |
-| `vision_system/homography.py`, `rotation.py`, `pathing.py` | `cobot_vision` / localization_node |
+| `vision_system/rotation.py`, `pathing.py` | `cobot_vision` / localization_node |
+| `vision_system/homography.py` | retired — replaced by the fitted 3D calibration (`calibration.py`, §10) |
 | `vision_system/train_yolo_obb.py` | offline tool (not a node) |
 | `cobot/cobot.py`, `cobot_logger.py` | `cobot_control` (import line change only) |
 | `cpp/` pybind sources + YMConnect | `motoman_cpp` ament_cmake package |
@@ -499,3 +516,69 @@ Required code changes found during analysis:
 | camera `snapshot`/`get_stream_provider`, vision `convert_to_jpeg` | frame topics |
 | `bin.py` layer heuristics (stale imports, `LAYER_Z` table) | measured depth (§5) + bin state in `cobot_node` |
 | `Config` shared object | per-node parameters + bringup YAML (§6) |
+
+---
+
+## 10. Camera→robot calibration
+
+Replaces the hand-entered 4-corner homography and the separate `depth_at_top_layer`
+guess with **one fitted 3D transform**, measured by the robot itself: a red dot is
+mounted near the tool head, the robot parks it at known positions, the camera reports
+where it sees it, and localization solves for the mapping. Model: `red_dot_best.pt`.
+
+### 10.1 The math (`cobot_vision/calibration.py` — pure, no ROS imports)
+
+A pinhole camera composed with a rigid camera→robot transform is **exactly linear in
+the features `[u·d, v·d, d, 1]`** (back-projection is `X_cam = (u−cx)·d/fx`). One 3×4
+matrix `M` maps pixel + depth straight to robot base mm:
+
+```
+[X, Y, Z]ᵀ = M · [u·d,  v·d,  d,  1]ᵀ
+```
+
+Least-squares over the samples absorbs the intrinsics — no CameraInfo needed. The fit
+**requires depth variation** (≥30 mm span) or it is rejected: with one height the
+feature matrix is rank-3 and Z is unconstrained. This is the "sample at multiple
+heights" rule enforced in math. Per-axis RMS residuals are the honest quality measure;
+a fit above `calibration_max_rms_mm` is rejected and the old transform kept.
+
+The inverse (robot xyz → expected pixel + depth) is closed-form and powers
+`/vision/verify_target`.
+
+### 10.2 The marker offset
+
+The dot is not at the TCP. Each sample's ground truth is `commanded_TCP +
+marker_offset_mm`, applied by **localization** before fitting (never absorbed into the
+fit — the transform must localize cans, not tool flanges). To keep frames unambiguous
+every calibration pose uses one fixed orientation (`calibration_orientation_deg`,
+default 180/0/0 = the pick orientation), and the offset is measured **along robot base
+axes at that orientation**, to the dot surface the camera sees.
+
+### 10.3 Ownership split — movements vs math
+
+| | owner | does |
+|---|---|---|
+| `/cobot/calibrate` | `cobot_node` | pose grid from params, drives the robot, holds the one-operation lock for the whole run, reports progress on `/cobot/status` (`calibrating`), stop-button aborts between poses |
+| `/vision/calibration_begin` | `localization_node` | clears the sample buffer, warms the red-dot model |
+| `/vision/calibration_sample` | `localization_node` | "marker parked at TCP (x,y,z), measure now": N `locate_dot` reads → median (u,v), median-window depth from its own buffer, add marker offset, store the pair |
+| `/vision/calibration_compute` | `localization_node` | fit → validate RMS → write `calibration.yaml` → hot-swap the live transform |
+| `/vision/locate_dot` | `yolo_node` | red-dot inference on the latest color frame (only ultralytics importer) |
+
+Sequence: web **Calibrate** → `/cobot/calibrate` → `begin` → {move → settle →
+`sample`} × poses → `compute` → result in `/cobot/status` detail. Poses that fail
+(unreachable, dot occluded, bad depth) are skipped; the fit is overdetermined.
+
+### 10.4 Persistence & the no-fallback rule
+
+`calibration.yaml` is written into the bringup config dir, which docker-compose
+bind-mounts — calibration survives container rebuilds. It is per-machine and
+gitignored. On startup localization loads it if present; **if absent the node refuses
+to localize** (detections dropped loudly, `verify_target` errors). No homography
+fallback exists: an unmeasured transform must never move the robot.
+
+Prerequisites before running a calibration (all parameters):
+
+- `cobot_node.calibration_{x,y}_range_mm`, `calibration_z_levels_mm` — safe, reachable,
+  in-frame bounds; `[0,0]` means unconfigured and `/cobot/calibrate` refuses
+- `localization_node.marker_offset_mm` — measured with a ruler after mounting the dot
+- `yolo_node.dot_model_path` — `red_dot_best.pt` in the models mount

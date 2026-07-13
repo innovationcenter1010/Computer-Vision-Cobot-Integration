@@ -1,4 +1,5 @@
-import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js";
+// Query param busts the module cache when commands change (bump with app.js version).
+import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js?v=2";
 
 
 function setFieldValue(id, value) {

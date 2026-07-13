@@ -4,13 +4,18 @@
 #
 # Structured data (place trajectories) lives in trajectories.json, referenced
 # by cobot_node.trajectories_file — launch resolves it to the installed share
-# path unless overridden.
+# path unless overridden. The fitted camera→robot transform lives in
+# calibration.yaml next to this file (written by the calibration routine,
+# injected as localization_node.calibration_file by launch).
 
 camera_node:
   ros__parameters:
     color_endpoint: "tcp://host.docker.internal:5550"
     depth_endpoint: "tcp://host.docker.internal:5551"
     publish_rate_hz: 15.0
+    # /camera/save_frames writes timestamped color/depth PNG pairs here
+    # (bind-mounted → appears on the host under vision_workspace/).
+    capture_dir: "/ws/vision_workspace/operation/captures"
 
 yolo_node:
   ros__parameters:
@@ -21,12 +26,16 @@ yolo_node:
     image_size: 640
     remove_duplicates: true
     duplicate_center_distance_px: 50.0
+    # Calibration marker model (/vision/locate_dot), lazy-loaded on first use.
+    dot_model_path: "/ws/vision_workspace/models/red_dot_best.pt"
+    dot_confidence: 0.5
 
 localization_node:
   ros__parameters:
-    # Flattened 4x2 corners, order TL, TR, BR, BL (from legacy bin_configs)
-    image_corners: [3744.0, 1178.0, 4114.0, 4524.0, 492.0, 4408.0, 904.0, 1241.0]
-    real_world_corners_mm: [448.22, -1600.0, -677.22, -1600.0, -677.22, -565.96, 448.22, -565.96]
+    # Bin outline in pixels (flattened 4x2, TL,TR,BR,BL) — get_layer_height ROI.
+    bin_image_corners_px: [3744.0, 1178.0, 4114.0, 4524.0, 492.0, 4408.0, 904.0, 1241.0]
+    # Bin outline in robot mm (flattened 4x2, TL,TR,BR,BL) — snake pick ordering.
+    bin_corners_mm: [448.22, -1600.0, -677.22, -1600.0, -677.22, -565.96, 448.22, -565.96]
     can_height_mm: 87.0
     pathing_row_tolerance_mm: 50.0
     depth_buffer_size: 15
@@ -35,6 +44,16 @@ localization_node:
     # Depth reading (mm) when the top layer is present. 0.0 = uncalibrated:
     # get_layer_height returns layer_index=-1 until measured on hardware.
     depth_at_top_layer_mm: 0.0
+    # --- camera→robot calibration (math side) ---
+    # Red dot relative to the commanded TCP, measured along ROBOT BASE axes
+    # with the arm at the calibration orientation. Measure to the dot surface
+    # the camera sees. MEASURE AND SET BEFORE CALIBRATING.
+    marker_offset_mm: [0.0, 0.0, 0.0]
+    dot_samples_per_pose: 3
+    calibration_min_samples: 8
+    # Fit worse than this on any axis → calibration rejected, old transform kept.
+    calibration_max_rms_mm: 5.0
+    # calibration_file is injected by robot.launch.py (bind-mounted config dir).
 
 cobot_node:
   ros__parameters:
@@ -42,13 +61,24 @@ cobot_node:
     tool_head_length_mm: 620.0
     tool_head_xy_offset: 0.0
     tool_head_compression_distance_mm: 50.0
+    # --- calibration pose grid (movement side) ---
+    # SET SAFE, REACHABLE BOUNDS: every pose must keep the marker inside the
+    # camera frame and the arm clear of the bin. [0,0] = not configured;
+    # /cobot/calibrate refuses to run until these are set.
+    calibration_x_range_mm: [0.0, 0.0]
+    calibration_y_range_mm: [0.0, 0.0]
+    # At least two heights >=30mm apart or the fit is rejected (Z unconstrained).
+    calibration_z_levels_mm: [0.0]
+    calibration_grid_size: [3, 2]        # nx, ny poses per z level
+    calibration_orientation_deg: [180.0, 0.0, 0.0]   # rx, ry, rz for every pose
+    calibration_settle_sec: 0.5
     # trajectories_file is injected by robot.launch.py (share path);
     # set it here only to override.
 
 web_node:
   ros__parameters:
     port: 8000
-    web_stream_hz: 5.0
+    web_stream_hz: 15.0
     results_dir: "/ws/vision_workspace/operation/results"
     # params_file is injected by robot.launch.py so /api/config edits
     # persist to this file.

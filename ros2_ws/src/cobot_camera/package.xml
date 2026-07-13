@@ -15,10 +15,11 @@
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
 
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-zmq</exec_depend>
-  <!-- opencv used by frame_saver only -->
+  <!-- opencv: /camera/save_frames PNG writing (and frame_saver) -->
   <exec_depend>python3-opencv</exec_depend>
 
   <test_depend>ament_copyright</test_depend>

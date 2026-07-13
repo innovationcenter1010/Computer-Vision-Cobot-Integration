@@ -310,6 +310,11 @@ class Cobot:
 
         return pick_and_place_report
     
+    async def move_to(self, x, y, z, rx, ry, rz):
+        """One supervised cartesian move from plain floats — keeps
+        motoman_cpp types out of the ROS node layer."""
+        return await self.goto(motoman_cpp.Position(x, y, z, rx, ry, rz))
+
     async def goto(self,position,offset: PositionOffset | None = None):
 
         goto_report = Cobot_Operation_Report("GOTO REPORT")

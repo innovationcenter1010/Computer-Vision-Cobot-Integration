@@ -14,6 +14,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LayerReport.msg"
   "srv/VerifyTarget.srv"
   "srv/GetLayerHeight.srv"
+  "srv/LocateDot.srv"
+  "srv/CalibrationSample.srv"
   DEPENDENCIES std_msgs
 )
 

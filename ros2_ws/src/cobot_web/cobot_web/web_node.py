@@ -67,6 +67,7 @@ COMMAND_ROUTES = {
     ("COBOT", "pickup"): "/cobot/start",  # pickup == start the scan→pick cycle
     ("COBOT", "stop"): "/cobot/stop",
     ("COBOT", "calibrate"): "/cobot/calibrate",
+    ("CAMERA", "save"): "/camera/save_frames",  # capture pair → vision_workspace
 }
 
 COBOT_STATE_NAMES = {
@@ -75,6 +76,7 @@ COBOT_STATE_NAMES = {
     CobotStatus.STATE_PICKING: "picking",
     CobotStatus.STATE_STOPPING: "stopping",
     CobotStatus.STATE_ERROR: "error",
+    CobotStatus.STATE_CALIBRATING: "calibrating",
 }
 
 

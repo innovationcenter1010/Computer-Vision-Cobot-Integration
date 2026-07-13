@@ -6,12 +6,16 @@
   <description>
     Vision pipeline, split into two nodes:
       yolo_node          — pure perception: YOLO-OBB on the latest color frame,
-                           publishes pixel-space detections. Only importer of
+                           publishes pixel-space detections; locates the red
+                           calibration dot on request. Only importer of
                            ultralytics (pip dependency, no rosdep key).
-      localization_node  — pure geometry: homography px→mm, rz from corners,
-                           real_z measured from the depth stream, snake pick
-                           ordering. Also serves the cheap tier-1 depth checks
-                           (VerifyTarget, GetLayerHeight).
+      localization_node  — pure geometry: fitted camera→robot calibration
+                           (px + depth → base-frame xyz, calibration.py), rz
+                           from corners, snake pick ordering. Owns the
+                           calibration math services (begin/sample/compute;
+                           cobot_node drives the robot between them) and the
+                           cheap tier-1 depth checks (VerifyTarget,
+                           GetLayerHeight). Refuses to localize uncalibrated.
     train_yolo_obb.py is an offline tool, not a node.
   </description>
   <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>

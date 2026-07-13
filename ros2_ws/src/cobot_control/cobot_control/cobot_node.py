@@ -8,16 +8,25 @@ and the controller decides which operation to run.
   out: /cobot/status (CobotStatus, latched)
        /cobot/layer_report (LayerReport)
 
-Threading model: pick operations run in a background thread driving the
-existing async Cobot choreography with asyncio.run(). Services live in their
-own callback group so /cobot/stop is reachable WHILE a pick runs (requires the
-MultiThreadedExecutor set up in main()). One operation at a time — a target
-array arriving mid-pick is rejected with a warning.
+Calibration split: this node owns the MOVEMENTS — it steps the marker through
+the configured pose grid and, parked at each pose, tells localization_node to
+take its measurements (/vision/calibration_sample). After the last pose it
+tells localization to compile everything into the transform
+(/vision/calibration_compute). All math, dot detection and persistence live on
+the vision side; this loop only drives the robot and reports progress.
+
+Threading model: pick and calibration operations run in a background thread
+driving the existing async Cobot choreography with asyncio.run(). Services
+live in their own callback group so /cobot/stop is reachable WHILE an
+operation runs (requires the MultiThreadedExecutor set up in main()). One
+operation at a time — _operation_lock is held for the whole layer or the whole
+calibration run, so they exclude each other.
 """
 
 import asyncio
 import json
 import threading
+import time
 from pathlib import Path
 
 import rclpy
@@ -29,11 +38,17 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 from std_srvs.srv import Trigger
 
 from cobot_interfaces.msg import CanTargetArray, CobotStatus, LayerReport
+from cobot_interfaces.srv import CalibrationSample
 
 from cobot_control.cobot import Cobot, Cobot_Operation_Status
 
 
 LATCHED_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+
+# calibration_begin lazy-loads the red-dot model on the vision side.
+CAL_BEGIN_TIMEOUT_SEC = 120.0
+CAL_SAMPLE_TIMEOUT_SEC = 30.0
+CAL_COMPUTE_TIMEOUT_SEC = 60.0
 
 
 class CobotNode(Node):
@@ -45,6 +60,16 @@ class CobotNode(Node):
         self.declare_parameter("tool_head_xy_offset", 0.0)
         self.declare_parameter("tool_head_compression_distance_mm", 50.0)
         self.declare_parameter("trajectories_file", "")
+
+        # Calibration pose grid — SET SAFE, REACHABLE BOUNDS BEFORE RUNNING.
+        # Every pose must keep the marker inside the camera frame and the arm
+        # clear of the bin. [0,0] ranges mean "not configured": calibrate refuses.
+        self.declare_parameter("calibration_x_range_mm", [0.0, 0.0])
+        self.declare_parameter("calibration_y_range_mm", [0.0, 0.0])
+        self.declare_parameter("calibration_z_levels_mm", [0.0])
+        self.declare_parameter("calibration_grid_size", [3, 2])  # nx, ny per level
+        self.declare_parameter("calibration_orientation_deg", [180.0, 0.0, 0.0])
+        self.declare_parameter("calibration_settle_sec", 0.5)
 
         trajectories_file = self.get_parameter("trajectories_file").value
         if not trajectories_file:
@@ -81,7 +106,8 @@ class CobotNode(Node):
             self.get_logger().error(f"Cobot connection failed: {e}")
             self._publish_status(CobotStatus.STATE_DISCONNECTED, str(e))
 
-        # Services in their own group: stop must interleave with a running pick.
+        # Services in their own group: stop must interleave with a running
+        # pick or calibration.
         service_group = MutuallyExclusiveCallbackGroup()
         self.create_service(Trigger, "/cobot/start", self._on_start, callback_group=service_group)
         self.create_service(Trigger, "/cobot/stop", self._on_stop, callback_group=service_group)
@@ -92,8 +118,13 @@ class CobotNode(Node):
         self.create_subscription(CanTargetArray, "/vision/targets", self._on_targets, 10)
 
         # The controller asks vision to sense when it needs data (§5 of the
-        # architecture doc): start → scan; tier-1 checks per pick come later.
+        # architecture doc): start → scan; calibration → begin/sample/compute.
         self._scan_client = self.create_client(Trigger, "/vision/scan")
+        self._cal_begin_client = self.create_client(Trigger, "/vision/calibration_begin")
+        self._cal_sample_client = self.create_client(
+            CalibrationSample, "/vision/calibration_sample"
+        )
+        self._cal_compute_client = self.create_client(Trigger, "/vision/calibration_compute")
 
     # ------------------------------------------------------------------
     # Status helpers
@@ -105,6 +136,17 @@ class CobotNode(Node):
         msg.state = state
         msg.detail = detail
         self._status_pub.publish(msg)
+
+    def _call(self, client, request, timeout: float):
+        """Blocking service call from a worker thread; the executor threads
+        resolve the future."""
+        future = client.call_async(request)
+        done = threading.Event()
+        future.add_done_callback(lambda _: done.set())
+        if not done.wait(timeout=timeout):
+            future.cancel()
+            raise TimeoutError(f"{client.srv_name} timed out after {timeout:.0f}s")
+        return future.result()
 
     # ------------------------------------------------------------------
     # High-level controller: decide what to run based on input
@@ -199,14 +241,149 @@ class CobotNode(Node):
         self._stop_requested.set()
         self._publish_status(CobotStatus.STATE_STOPPING, "stop requested")
         response.success = True
-        response.message = "stop requested (takes effect after the current can)"
+        response.message = "stop requested (takes effect after the current can/pose)"
         return response
 
+    # ------------------------------------------------------------------
+    # Calibration: drive the marker through the grid, vision does the math
+    # ------------------------------------------------------------------
+
+    def _calibration_poses(self) -> list[tuple[float, float, float]]:
+        x_min, x_max = self.get_parameter("calibration_x_range_mm").value
+        y_min, y_max = self.get_parameter("calibration_y_range_mm").value
+        z_levels = list(self.get_parameter("calibration_z_levels_mm").value)
+        nx, ny = (int(v) for v in self.get_parameter("calibration_grid_size").value)
+
+        # linspace by hand to avoid importing numpy just for this
+        def spread(lo: float, hi: float, n: int) -> list[float]:
+            if n <= 1:
+                return [(lo + hi) / 2.0]
+            step = (hi - lo) / (n - 1)
+            return [lo + i * step for i in range(n)]
+
+        return [
+            (x, y, z)
+            for z in z_levels
+            for y in spread(y_min, y_max, ny)
+            for x in spread(x_min, x_max, nx)
+        ]
+
     def _on_calibrate(self, request, response):
-        # TODO: calibration routine (legacy defined the command but no handler).
-        response.success = False
-        response.message = "calibrate not implemented yet"
+        if self._cobot is None:
+            response.success = False
+            response.message = "robot not connected"
+            return response
+
+        if list(self.get_parameter("calibration_x_range_mm").value) == [0.0, 0.0] or \
+           list(self.get_parameter("calibration_y_range_mm").value) == [0.0, 0.0] or \
+           list(self.get_parameter("calibration_z_levels_mm").value) == [0.0]:
+            response.success = False
+            response.message = (
+                "calibration grid not configured — set calibration_x_range_mm / "
+                "calibration_y_range_mm / calibration_z_levels_mm to safe bounds"
+            )
+            return response
+
+        for client, name in (
+            (self._cal_begin_client, "/vision/calibration_begin"),
+            (self._cal_sample_client, "/vision/calibration_sample"),
+            (self._cal_compute_client, "/vision/calibration_compute"),
+        ):
+            if not client.service_is_ready():
+                response.success = False
+                response.message = f"{name} not available"
+                return response
+
+        if not self._operation_lock.acquire(blocking=False):
+            response.success = False
+            response.message = "operation already running"
+            return response
+
+        self._stop_requested.clear()
+        self._operation_thread = threading.Thread(
+            target=self._run_calibration, daemon=True
+        )
+        self._operation_thread.start()
+
+        response.success = True
+        response.message = "calibration started — progress on /cobot/status"
         return response
+
+    def _run_calibration(self):
+        """Owns self._operation_lock (acquired by _on_calibrate); releases on exit."""
+        try:
+            poses = self._calibration_poses()
+            rx, ry, rz = self.get_parameter("calibration_orientation_deg").value
+            settle = float(self.get_parameter("calibration_settle_sec").value)
+
+            self._publish_status(
+                CobotStatus.STATE_CALIBRATING, f"starting: {len(poses)} poses"
+            )
+
+            # Vision clears its sample buffer and warms up the red-dot model.
+            begin = self._call(
+                self._cal_begin_client, Trigger.Request(), CAL_BEGIN_TIMEOUT_SEC
+            )
+            if not begin.success:
+                self._publish_status(
+                    CobotStatus.STATE_ERROR, f"calibration begin refused: {begin.message}"
+                )
+                return
+
+            collected = 0
+            for index, (x, y, z) in enumerate(poses):
+                if self._stop_requested.is_set():
+                    self._publish_status(
+                        CobotStatus.STATE_IDLE,
+                        f"calibration aborted by stop at pose {index + 1}/{len(poses)}",
+                    )
+                    return
+
+                label = f"pose {index + 1}/{len(poses)} ({x:.0f}, {y:.0f}, {z:.0f})"
+                self._publish_status(
+                    CobotStatus.STATE_CALIBRATING, f"{label} — {collected} samples so far"
+                )
+
+                move_report = asyncio.run(self._cobot.move_to(x, y, z, rx, ry, rz))
+                if move_report.overall_status != Cobot_Operation_Status.job_success:
+                    self.get_logger().warn(f"{label}: move failed — skipped\n{move_report}")
+                    continue
+
+                time.sleep(settle)  # let vibration die before vision measures
+
+                sample = self._call(
+                    self._cal_sample_client,
+                    CalibrationSample.Request(x=x, y=y, z=z),
+                    CAL_SAMPLE_TIMEOUT_SEC,
+                )
+                if sample.success:
+                    collected = sample.sample_count
+                else:
+                    self.get_logger().warn(f"{label}: no sample ({sample.message})")
+
+            self._publish_status(
+                CobotStatus.STATE_CALIBRATING,
+                f"grid done: {collected} samples — computing transform",
+            )
+
+            compute = self._call(
+                self._cal_compute_client, Trigger.Request(), CAL_COMPUTE_TIMEOUT_SEC
+            )
+            if compute.success:
+                self._publish_status(
+                    CobotStatus.STATE_IDLE, f"calibration complete: {compute.message}"
+                )
+            else:
+                self._publish_status(
+                    CobotStatus.STATE_ERROR, f"calibration failed: {compute.message}"
+                )
+
+        except Exception as e:  # noqa: BLE001 — a failed calibration must not kill the node
+            self.get_logger().error(f"calibration crashed: {e}")
+            self._publish_status(CobotStatus.STATE_ERROR, f"calibration crashed: {e}")
+
+        finally:
+            self._operation_lock.release()
 
 
 def main(args=None):

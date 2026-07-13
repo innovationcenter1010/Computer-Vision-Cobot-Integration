@@ -25,10 +25,15 @@ cmake-build-release/
 *.pt
 *.engine
 
+# --- Per-machine calibration (written by /cobot/calibrate into the
+#     bind-mounted config dir; belongs to this robot+camera, not the repo) ---
+ros2_ws/src/cobot_bringup/config/calibration.yaml
+
 # --- Vision workspace runtime output ---
 vision_workspace/operation/inbox/
 vision_workspace/operation/debug_images/
 vision_workspace/operation/results/
+vision_workspace/operation/captures/
 vision_workspace/models/training_runs/
 
 # --- Misc ---

@@ -14,6 +14,7 @@ export const CobotCommands = Object.freeze({
 
 export const CameraCommands = Object.freeze({
     SNAPSHOT: "snapshot",
+    SAVE: "save",
 });
 
 export const Receiver = Object.freeze({

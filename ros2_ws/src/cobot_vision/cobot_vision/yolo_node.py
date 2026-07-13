@@ -6,6 +6,11 @@ returns immediately; results flow on /vision/detections_px, header-stamped
 with the color frame the model actually ran on so localization_node can match
 the corresponding depth frame.
 
+Also serves /vision/locate_dot for camera→robot calibration: a second model
+(red_dot_best.pt) finds the marker mounted on the cobot. Lazy-loaded on first
+call so normal startup stays fast; localization_node warms it up before the
+robot starts moving.
+
 Only node in the graph that imports ultralytics.
 """
 
@@ -21,6 +26,7 @@ from sensor_msgs.msg import Image
 from std_srvs.srv import Trigger
 
 from cobot_interfaces.msg import ObbDetection, ObbDetectionArray
+from cobot_interfaces.srv import LocateDot
 
 from cobot_vision.yolo_obb_detector import (
     YoloOBBDetector,
@@ -47,6 +53,10 @@ class YoloNode(Node):
         self.declare_parameter("remove_duplicates", True)
         self.declare_parameter("duplicate_center_distance_px", 50.0)
 
+        # Calibration marker model (see /vision/locate_dot).
+        self.declare_parameter("dot_model_path", "/ws/vision_workspace/models/red_dot_best.pt")
+        self.declare_parameter("dot_confidence", 0.5)
+
         model_path = self.get_parameter("model_path").value
 
         self._detector = YoloOBBDetector(
@@ -67,11 +77,17 @@ class YoloNode(Node):
 
         self._scan_thread: threading.Thread | None = None
 
+        # Red-dot model: loaded on first locate_dot call, guarded because the
+        # load takes seconds and calls may race.
+        self._dot_lock = threading.Lock()
+        self._dot_model = None
+
         self.create_subscription(Image, "/camera/color/image_raw", self._on_color, SENSOR_QOS)
         self._detections_pub = self.create_publisher(
             ObbDetectionArray, "/vision/detections_px", 10
         )
         self.create_service(Trigger, "/vision/scan", self._on_scan)
+        self.create_service(LocateDot, "/vision/locate_dot", self._on_locate_dot)
 
     # ------------------------------------------------------------------
     # Inputs
@@ -100,10 +116,10 @@ class YoloNode(Node):
                 self._detector.max_det = int(param.value)
             elif param.name == "image_size":
                 self._detector.imgsz = int(param.value)
-            elif param.name == "model_path":
+            elif param.name in ("model_path", "dot_model_path"):
                 return SetParametersResult(
                     successful=False,
-                    reason="model_path cannot change at runtime — restart yolo_node",
+                    reason=f"{param.name} cannot change at runtime — restart yolo_node",
                 )
 
         return SetParametersResult(successful=True)
@@ -171,6 +187,67 @@ class YoloNode(Node):
 
         except Exception as e:  # noqa: BLE001 — a failed scan must not kill the node
             self.get_logger().error(f"Scan failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Calibration marker
+    # ------------------------------------------------------------------
+
+    def _get_dot_model(self):
+        with self._dot_lock:
+            if self._dot_model is None:
+                from ultralytics import YOLO
+
+                path = self.get_parameter("dot_model_path").value
+                self.get_logger().info(f"Loading red-dot model: {path}")
+                self._dot_model = YOLO(path)
+            return self._dot_model
+
+    def _on_locate_dot(self, request, response):
+        response.found = False
+        response.u = 0.0
+        response.v = 0.0
+        response.confidence = 0.0
+
+        with self._frame_lock:
+            frame = self._latest_frame
+
+        if frame is None:
+            response.message = "no camera frame received yet"
+            return response
+
+        try:
+            model = self._get_dot_model()
+            results = model.predict(
+                source=frame,
+                conf=self.get_parameter("dot_confidence").value,
+                verbose=False,
+            )[0]
+        except Exception as e:  # noqa: BLE001 — a bad model file must not kill the node
+            response.message = f"red-dot inference failed: {e}"
+            self.get_logger().error(response.message)
+            return response
+
+        # Accept either head type: axis-aligned boxes or OBB, whichever the
+        # red-dot model was trained with. Take the highest-confidence hit.
+        centers, confs = [], []
+        if getattr(results, "obb", None) is not None and len(results.obb) > 0:
+            centers = results.obb.xywhr[:, :2].tolist()
+            confs = results.obb.conf.tolist()
+        elif getattr(results, "boxes", None) is not None and len(results.boxes) > 0:
+            centers = results.boxes.xywh[:, :2].tolist()
+            confs = results.boxes.conf.tolist()
+
+        if not centers:
+            response.message = "no dot detected"
+            return response
+
+        best = max(range(len(confs)), key=lambda i: confs[i])
+        response.found = True
+        response.u = float(centers[best][0])
+        response.v = float(centers[best][1])
+        response.confidence = float(confs[best])
+        response.message = f"{len(centers)} detection(s)"
+        return response
 
 
 def main(args=None):
