@@ -94,7 +94,7 @@ class WebNode(Node):
         super().__init__("web_node")
 
         self.declare_parameter("port", 8000)
-        self.declare_parameter("web_stream_hz", 5.0)
+        self.declare_parameter("web_stream_hz", 15.0)
         # The bringup params YAML — source of truth for GET/POST /api/config.
         self.declare_parameter("params_file", "")
         self.declare_parameter("results_dir", "/ws/vision_workspace/operation/results")

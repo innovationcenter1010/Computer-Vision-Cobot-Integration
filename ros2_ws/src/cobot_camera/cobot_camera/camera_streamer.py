@@ -1,3 +1,5 @@
+import time
+
 import zmq
 import numpy as np
 import struct
@@ -148,6 +150,9 @@ class CameraStream:
 
         is_color = label == "COLOR"
 
+        skipped_total = 0
+        last_skip_report = time.monotonic()
+
         try:
             while not self._stop_event.is_set():
                 try:
@@ -156,9 +161,51 @@ class CameraStream:
                 except zmq.Again:
                     continue  # timeout — loop back and check stop_event
 
+                # ---- drain-to-latest ----
+                # Keep ONLY the newest frame pair. Without this the loop decodes
+                # every queued frame in FIFO order, and ZMQ's default HWM
+                # (1000 msgs) can hold ~30s of video — the consumer then trails
+                # reality by the full backlog, forever.
+                skipped = 0
+                while True:
+                    try:
+                        newer_hdr = sock.recv(zmq.NOBLOCK)
+                        newer_payload = sock.recv()  # its pair follows (RCVTIMEO applies)
+                        hdr_bytes, payload = newer_hdr, newer_payload
+                        skipped += 1
+                    except zmq.Again:
+                        break
+
+                if skipped:
+                    skipped_total += skipped
+                    now = time.monotonic()
+                    if now - last_skip_report > 5.0:
+                        print(
+                            f"[{label}] running behind: skipped {skipped_total} "
+                            f"stale frames in the last {now - last_skip_report:.0f}s",
+                            flush=True,
+                        )
+                        skipped_total = 0
+                        last_skip_report = now
+
+                # ---- pairing guards ----
+                # If a header/payload pair ever desyncs (e.g. a lone header at
+                # a timeout boundary), discard until a valid pair lines up.
+                if len(hdr_bytes) != HEADER_SIZE:
+                    print(f"[{label}] malformed header ({len(hdr_bytes)} bytes) — resyncing", flush=True)
+                    continue
+
                 stream_type, frame_index, w, h, channels, size = struct.unpack(
                     HEADER_FMT, hdr_bytes
                 )
+
+                if len(payload) != size:
+                    print(
+                        f"[{label}] header/payload desync "
+                        f"(expected {size} bytes, got {len(payload)}) — resyncing",
+                        flush=True,
+                    )
+                    continue
 
                 if stream_type == 0:
                     img = np.frombuffer(payload, dtype=np.uint8).reshape(h, w, channels)
