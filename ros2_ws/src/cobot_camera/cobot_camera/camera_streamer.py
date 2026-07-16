@@ -1,3 +1,27 @@
+"""ZMQ frame receiver — newest frame wins.
+
+Accepts a frame in ANY of three wire framings, so publisher changes never
+black out the stream:
+    1. multipart:  send(header, SNDMORE); send(payload)     ← current streamer
+    2. combined:   send(header + payload)                    (one message)
+    3. legacy:     send(header); send(payload)               (two messages)
+
+LATENCY RULE — the fix for "stream lags reality" lives in the PUBLISHER:
+    sock.setsockopt(zmq.SNDHWM, 1)   # BEFORE bind — queue at most one frame;
+                                     # PUB drops stale frames instead of
+                                     # queueing them behind the slow pipe
+Any queue between camera and screen adds standing latency equal to its depth
+× frame transfer time. Color frames are far larger than depth frames, so a
+queued color pipe trails a live depth pipe by exactly that backlog. The
+receiver here keeps its own side drained (small RCVHWM + skip-to-newest), but
+it can only skip frames that already crossed TCP — publisher-side queueing
+must be capped at the publisher.
+
+NOTE: ZMQ_CONFLATE is deliberately NOT used — libzmq aborts the whole process
+(assertion in fq.cpp) when a conflating socket receives a multipart message,
+so it would turn a publisher framing choice into a crash loop here.
+"""
+
 import time
 
 import zmq
@@ -141,76 +165,83 @@ class CameraStream:
     # Internal
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _recv_frame(sock, flags: int = 0):
+        """One frame in any supported framing → (header, buffer, offset).
+
+        The pixel data lives in `buffer` starting at `offset` (kept as
+        buffer+offset so the combined framing stays zero-copy).
+        Raises zmq.Again if nothing is available (respecting `flags`/RCVTIMEO).
+        """
+        msg = sock.recv(flags)
+
+        if sock.getsockopt(zmq.RCVMORE):
+            # Multipart: header part + payload part (extra parts tolerated,
+            # last one wins). Parts of a multipart message arrive atomically.
+            payload = sock.recv()
+            while sock.getsockopt(zmq.RCVMORE):
+                payload = sock.recv()
+            return msg, payload, 0
+
+        if len(msg) == HEADER_SIZE:
+            # Legacy: header and payload as two separate messages — the pair
+            # follows on the wire (RCVTIMEO bounds the wait).
+            payload = sock.recv()
+            return msg, payload, 0
+
+        # Combined: header + payload in one message.
+        return msg[:HEADER_SIZE], msg, HEADER_SIZE
+
     def _receive_loop(self, endpoint: str, label: str):
         ctx  = zmq.Context()
         sock = ctx.socket(zmq.SUB)
         sock.setsockopt(zmq.RCVTIMEO, 500)   # ms — unblocks to check stop_event
+        # Small receive queue: at most ~one frame waits here; anything that
+        # does queue is skipped by the drain below. (No CONFLATE — see module
+        # docstring; it aborts the process on multipart input.)
+        sock.setsockopt(zmq.RCVHWM, 2)
         sock.connect(endpoint)
         sock.setsockopt(zmq.SUBSCRIBE, b"")
 
         is_color = label == "COLOR"
 
-        skipped_total = 0
-        last_skip_report = time.monotonic()
-
         try:
             while not self._stop_event.is_set():
                 try:
-                    hdr_bytes = sock.recv()
-                    payload   = sock.recv()
+                    hdr_bytes, buffer, offset = self._recv_frame(sock)
                 except zmq.Again:
                     continue  # timeout — loop back and check stop_event
 
-                # ---- drain-to-latest ----
-                # Keep ONLY the newest frame pair. Without this the loop decodes
-                # every queued frame in FIFO order, and ZMQ's default HWM
-                # (1000 msgs) can hold ~30s of video — the consumer then trails
-                # reality by the full backlog, forever.
-                skipped = 0
+                # Skip to the newest fully-arrived frame. With RCVHWM=2 this
+                # loop rarely runs more than once; it exists so a hiccup can
+                # never leave the display trailing a local backlog.
                 while True:
                     try:
-                        newer_hdr = sock.recv(zmq.NOBLOCK)
-                        newer_payload = sock.recv()  # its pair follows (RCVTIMEO applies)
-                        hdr_bytes, payload = newer_hdr, newer_payload
-                        skipped += 1
+                        hdr_bytes, buffer, offset = self._recv_frame(sock, zmq.NOBLOCK)
                     except zmq.Again:
                         break
 
-                if skipped:
-                    skipped_total += skipped
-                    now = time.monotonic()
-                    if now - last_skip_report > 5.0:
-                        print(
-                            f"[{label}] running behind: skipped {skipped_total} "
-                            f"stale frames in the last {now - last_skip_report:.0f}s",
-                            flush=True,
-                        )
-                        skipped_total = 0
-                        last_skip_report = now
-
-                # ---- pairing guards ----
-                # If a header/payload pair ever desyncs (e.g. a lone header at
-                # a timeout boundary), discard until a valid pair lines up.
                 if len(hdr_bytes) != HEADER_SIZE:
-                    print(f"[{label}] malformed header ({len(hdr_bytes)} bytes) — resyncing", flush=True)
+                    print(f"[{label}] malformed header ({len(hdr_bytes)} bytes) — dropped", flush=True)
                     continue
 
                 stream_type, frame_index, w, h, channels, size = struct.unpack(
                     HEADER_FMT, hdr_bytes
                 )
 
-                if len(payload) != size:
+                if len(buffer) - offset != size:
                     print(
-                        f"[{label}] header/payload desync "
-                        f"(expected {size} bytes, got {len(payload)}) — resyncing",
+                        f"[{label}] size mismatch (header says {size}, "
+                        f"payload is {len(buffer) - offset}) — dropped",
                         flush=True,
                     )
                     continue
 
+                # Zero-copy view into the payload buffer.
                 if stream_type == 0:
-                    img = np.frombuffer(payload, dtype=np.uint8).reshape(h, w, channels)
+                    img = np.frombuffer(buffer, dtype=np.uint8, offset=offset).reshape(h, w, channels)
                 else:
-                    img = np.frombuffer(payload, dtype=np.int16).reshape(h, w)
+                    img = np.frombuffer(buffer, dtype=np.int16, offset=offset).reshape(h, w)
 
                 frame = Frame(index=frame_index, width=w, height=h, data=img)
 
