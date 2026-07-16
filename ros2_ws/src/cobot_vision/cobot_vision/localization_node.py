@@ -6,7 +6,7 @@ camera→robot calibration (see calibration.py):
   in:  /vision/detections_px (ObbDetectionArray)  — from yolo_node
        /camera/depth/image_raw (Image, 16SC1 mm)  — ring buffer, stamp-matched
   out: /vision/targets (CanTargetArray)           — ordered pick layer;
-                                                     consumed by cobot_node + web
+                                                     consumed by task_manager + web
 
 NO CALIBRATION, NO TARGETS: if calibration_file is missing the node refuses to
 localize (detections are dropped, verify_target errors) until a calibration
@@ -18,8 +18,9 @@ cobot_params.yaml — parameter defaults here are deliberately zeros, and
 zero-valued spatial params mean "unconfigured": the dependent feature refuses
 to run instead of guessing.
 
-Calibration split: cobot_node owns the movements and drives the routine
-(/cobot/calibrate); this node owns every millimeter of math. cobot_node calls:
+Calibration split: task_manager drives the routine (/task/calibrate) by
+sending MoveToPose goals to cobot_node; this node owns every millimeter of
+math. Between poses the task manager calls:
 
   /vision/calibration_begin    — clear the sample buffer, warm the dot model
   /vision/calibration_sample   — "marker parked at TCP (x,y,z), measure now":
@@ -122,7 +123,7 @@ class LocalizationNode(Node):
         self.declare_parameter("depth_at_top_layer_mm", 0.0)
 
         # ---- camera→robot calibration (math side; the pose grid that drives
-        # the robot lives in cobot_node) ----
+        # the robot lives in task_manager) ----
         # Where the fitted transform lives; injected by robot.launch.py into
         # the bind-mounted config dir so it survives container rebuilds.
         self.declare_parameter("calibration_file", "")
@@ -215,7 +216,7 @@ class LocalizationNode(Node):
         if not Path(path).exists():
             self.get_logger().warn(
                 f"NOT CALIBRATED — {path} does not exist. /vision/targets stays "
-                "silent until a calibration run completes (/cobot/calibrate)."
+                "silent until a calibration run completes (/task/calibrate)."
             )
             return
         try:
@@ -273,7 +274,7 @@ class LocalizationNode(Node):
         calibration = self._calibration
         if calibration is None:
             self.get_logger().error(
-                "detections dropped: NOT CALIBRATED — run /cobot/calibrate",
+                "detections dropped: NOT CALIBRATED — run /task/calibrate",
                 throttle_duration_sec=5.0,
             )
             return
@@ -435,7 +436,7 @@ class LocalizationNode(Node):
         return response
 
     # ------------------------------------------------------------------
-    # Calibration math services (cobot_node drives the robot between calls)
+    # Calibration math services (task_manager drives the robot between calls)
     # ------------------------------------------------------------------
 
     def _call_dot(self, timeout: float):

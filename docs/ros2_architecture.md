@@ -37,12 +37,12 @@ Three payload shapes cross the queues: scalars (UI), `DualFrame` (two numpy imag
 
 ## 2. Target node graph
 
-Five nodes plus a bringup package. Design decisions locked in:
+Six nodes plus a bringup package. Design decisions locked in:
 
 - **Cobot stays Python + pybind** — no C++ ROS node; `motoman_cpp` is imported exactly as today.
 - **Vision splits into two nodes** — ML (YOLO) and geometry (localization) are separate.
-- **Vision pushes targets directly to the cobot** (topic) — the cobot's high-level controller
-  decides what to run based on input, mirroring the legacy `command_map`.
+- **A task manager owns the state machine** (§11) — cobot_node is a motion action server;
+  nothing moves because a topic was published. `/vision/targets` is data, not a trigger.
 - **All frames flow as topics** — vision *and* the web UI subscribe to the same camera streams.
 
 ```
@@ -52,33 +52,36 @@ Five nodes plus a bringup package. Design decisions locked in:
                                                        │                    ▲            │
                                                        └─▶ web_node         │            │
                                                                             │            │
- browser ══ws══▶ web_node ── /vision/scan (Trigger) ──▶ yolo_node           │            │
-                    │                                     │                 │            │
-                    │                                     ▼                 │            │
-                    │◀───────────── /vision/detections_px (pixel space) ────┘            │
-                    │◀───────────── /vision/targets (robot space) ◀──────────────────────┘
-                    │                        │
-                    │                        ▼
-                    ├── start/stop/calibrate (Trigger) ──▶ cobot_node (high-level controller)
-                    │◀───────── /cobot/status + /cobot/layer_report ──┘
+ browser ══ws══▶ web_node                                                   │            │
+                    │◀──────────── /vision/detections_px (pixel space) ─────┘            │
+                    │◀──┬───────── /vision/targets (robot space) ◀────────────────────┬──┘
+                    │   │                                                             │
+                    ├── /task/start|stop|calibrate (Trigger) ──▶ task_manager ◀───────┘
+                    │◀──────── /task/status + /task/layer_report ──┤ │
+                    │                              /vision/scan ◀──┘ │ (+ calibration srvs)
+                    │                                                ▼
+                    │              PickCan / MoveToPose actions ──▶ cobot_node ─▶ motoman_cpp
+                    │◀────────────────────────── /cobot/status ─────┘   (hardware status)
 ```
 
 ### Workspace layout
 
 ```
 ros2_ws/src/
-├── cobot_interfaces/      # msgs/srvs only — depends on nothing local
+├── cobot_interfaces/      # msgs/srvs/actions only — depends on nothing local
 ├── cobot_camera/          # ament_python: camera_streamer.py + camera_node
 ├── cobot_vision/          # ament_python: yolo_node + localization_node (two executables)
 ├── motoman_cpp/           # ament_cmake: pybind11 module + libYMConnect (see §7)
 ├── cobot_control/         # ament_python: cobot.py + cobot_node (imports motoman_cpp)
+├── cobot_tasks/           # ament_python: task_manager — state machine + sequencing (§11)
 ├── cobot_web/             # ament_python: FastAPI app + web_node
 └── cobot_bringup/         # launch files + config YAMLs
 ```
 
 Dependency rule: every package depends only on `cobot_interfaces` + standard messages
 (`sensor_msgs`, `std_srvs`). `cobot_control` additionally depends on `motoman_cpp`.
-Nothing depends on `cobot_bringup`.
+`cobot_tasks` depends on `cobot_interfaces` + rclpy ONLY (§11). Nothing depends on
+`cobot_bringup`.
 
 ---
 
@@ -129,47 +132,49 @@ become publisher calls.
     `LAYER_Z1..Z7` table
   - `real_rz` from OBB corners (`rotation.py`), corners mapped through the same transform
   - pick ordering (`pathing.py` — lives here because ordering is done in real space)
-- Publishes `/vision/targets` (`CanTargetArray`) — consumed by `cobot_node` (pick trigger)
-  and `web_node` (display)
+- Publishes `/vision/targets` (`CanTargetArray`) — consumed by `task_manager` (data for the
+  pick cycle it requested) and `web_node` (display)
 - Services (cheap depth reads, no ML — see §5):
   - `/vision/verify_target` — is a can still at (x, y), and at what measured z?
   - `/vision/get_layer_height` — median depth over the bin ROI → current layer index
-- Calibration math services (`cobot_node` drives the robot between calls — see §10):
+- Calibration math services (`task_manager` drives the robot between calls — see §10):
   - `/vision/calibration_begin` · `/vision/calibration_sample` · `/vision/calibration_compute`
 
-### 3.4 `cobot_node` (pkg `cobot_control`) — single node, Python, pybind
+### 3.4 `cobot_node` (pkg `cobot_control`) — motion execution server, Python, pybind
 
-`cobot.py` and the `motoman_cpp` extension are untouched. The node *is* the high-level
-controller — direct descendant of the legacy `command_map`:
+`cobot.py` and the `motoman_cpp` extension survive intact. The node is the robot arm as a
+service — no decisions, no vision, no task state (those moved to `task_manager`, §11):
 
-- Subscribes `/vision/targets` → dispatches `pick_layer(targets)`
-- Services `/cobot/start`, `/cobot/stop`, `/cobot/calibrate` (`std_srvs/Trigger`)
-- `/cobot/calibrate` runs the calibration **movement loop** (§10): step the marker through
-  the configured pose grid, calling `/vision/calibration_sample` at each stop and
-  `/vision/calibration_compute` at the end — movements here, math in localization
-- Service clients: `/vision/scan`, `/vision/verify_target`, `/vision/get_layer_height`,
-  `/vision/calibration_*` (the controller decides *when* to sense — see §5)
-- Publishes `/cobot/status` (`CobotStatus`: idle / picking / stopping / calibrating / error)
-  and `/cobot/layer_report` (`LayerReport`, replacing the printed `Layer_Report`)
-- One-operation-at-a-time guard (busy flag) held for a whole layer or a whole calibration
-  run; a target array arriving mid-operation is rejected
-- **`stop` lives in its own callback group** so it is reachable while a pick runs — the one
-  place ROS threading genuinely matters here
-- Owns the **bin state machine** (layer index, `BIN_COMPLETE`) — pick-sequencing state is
-  control state, not perception state. Vision stays stateless. (Legacy `bin.py` kept this in
-  vision; it is stale code — it imports modules that no longer exist.)
+- Action `/cobot/pick_can` (`PickCan`) — pick + place ONE can; feedback = choreography phase
+  (check / approach / grip / lift / place); cancel honored at phase boundaries, never
+  between grip and lift
+- Action `/cobot/move_to_pose` (`MoveToPose`) — one supervised cartesian move; a cancel is
+  acknowledged after the move settles (no mid-motion stop in the pybind layer)
+- One motion at a time: a goal arriving while another executes is REJECTED (the task
+  manager serializes anyway; the guard makes any other caller safe)
+- Publishes `/cobot/status` (`CobotStatus`) — **hardware/connection status only**
+  (disconnected / idle / busy / error); operational state lives on `/task/status`
+- Execute callbacks run the async choreography via `asyncio.run()` on executor threads
+  (reentrant group), so goal/cancel requests stay serviceable mid-motion — that is what
+  makes native action cancellation work
 
-### 3.5 `web_node` (pkg `cobot_web`)
+### 3.5 `task_manager` (pkg `cobot_tasks`) — state machine + sequencing
+
+See §11. Owns start/stop/calibrate, the pick-layer and calibration loops, and
+`/task/status` — the single source of operational truth.
+
+### 3.6 `web_node` (pkg `cobot_web`)
 
 FastAPI app, templates, static files, `/api/config`, `/ws` — all preserved. The node is the
 browser⇄graph bridge:
 
 - The legacy `COMMAND_TRANSLATOR` string→enum table becomes a string→(service client) table
-  of the same shape
+  of the same shape — operations route to `/task/*` (the task manager), display-only
+  commands (`/vision/scan`, `/camera/save_frames`) go direct
 - Subscribes both image topics; throttles to ~5–10 Hz, JPEG-encodes, base64 over the existing
   websocket (the old `update_image` handler, fed by subscription instead of queue)
-- Subscribes `/vision/detections_px`, `/vision/targets`, `/cobot/status`,
-  `/cobot/layer_report` and forwards to the browser — the UI finally gets operation feedback
+- Subscribes `/vision/detections_px`, `/vision/targets`, `/task/status`,
+  `/task/layer_report` and forwards to the browser — the UI finally gets operation feedback
   (legacy reports only went to stdout)
 - Config editor becomes a parameter client (see §6)
 - Integration note: uvicorn's asyncio loop and the rclpy executor coexist by spinning rclpy
@@ -184,12 +189,16 @@ msg/ObbDetection.msg        # class_id, confidence, center px, corners px    (pi
 msg/ObbDetectionArray.msg   # header (stamp = source color frame) + image w/h + detections
 msg/CanTarget.msg           # real_x, real_y, real_z, real_rz + class_id, confidence
 msg/CanTargetArray.msg      # header + targets
-msg/CobotStatus.msg         # state enum + detail string
+msg/CobotStatus.msg         # HARDWARE status: disconnected/idle/busy/error + detail
+msg/TaskStatus.msg          # OPERATIONAL state: idle/scanning/picking/calibrating/
+                            # stopping/error + detail + active_task + progress   (§11)
 msg/LayerReport.msg         # successes, failures, overall_ok
 srv/VerifyTarget.srv        # CanTarget → bool present, float64 measured_z
 srv/GetLayerHeight.srv      # (bin ROI from params) → float64 median_z, int8 layer_index
 srv/LocateDot.srv           # () → found, dot center px (u, v), confidence     (§10)
 srv/CalibrationSample.srv   # commanded TCP (x, y, z) → success, sample_count  (§10)
+action/PickCan.action       # goal CanTarget → success/message; feedback phase (§11)
+action/MoveToPose.action    # goal x,y,z,rx,ry,rz → success/message            (§11)
 ```
 
 Everything else uses stock types: `sensor_msgs/Image`, `std_srvs/Trigger`. The pixel/robot
@@ -211,7 +220,7 @@ YOLO must not run per pick. The design uses three tiers of sensing cost; the dep
 | 1 | **Depth sampling** (localization_node srvs) | ~µs, no ML | "Is a can still at (x,y)? What height is the layer?" |
 | 2 | **YOLO scan** (yolo_node) | expensive | "Where is everything and how is it rotated?" |
 
-The cobot high-level controller drives the cycle:
+The task manager drives the cycle (pick execution = one `PickCan` goal per can):
 
 ```
   layer start ──▶ call /vision/scan ──▶ receive /vision/targets (N cans, ordered)
@@ -299,6 +308,14 @@ cobot_node:
     tool_head_xy_offset: 0.0
     tool_head_compression_distance_mm: 50.0
     trajectories_file: "config/trajectories.json"
+
+task_manager:
+  ros__parameters:
+    scan_timeout_sec: 30.0
+    # calibration pose grid (§10/§11) — zeros = unconfigured, calibrate refuses
+    calibration_x_range_mm: [0.0, 0.0]
+    calibration_y_range_mm: [0.0, 0.0]
+    calibration_z_levels_mm: [0.0]
 ```
 
 ### Web config editor
@@ -558,14 +575,15 @@ axes at that orientation**, to the dot surface the camera sees.
 
 | | owner | does |
 |---|---|---|
-| `/cobot/calibrate` | `cobot_node` | pose grid from params, drives the robot, holds the one-operation lock for the whole run, reports progress on `/cobot/status` (`calibrating`), stop-button aborts between poses |
+| `/task/calibrate` | `task_manager` | pose grid from params, sequences the run (holds the one-task lock), sends one `MoveToPose` goal per pose to `cobot_node`, reports progress on `/task/status` (`calibrating`), stop cancels the active move |
+| `/cobot/move_to_pose` | `cobot_node` | executes each grid move (the only node touching motoman) |
 | `/vision/calibration_begin` | `localization_node` | clears the sample buffer, warms the red-dot model |
 | `/vision/calibration_sample` | `localization_node` | "marker parked at TCP (x,y,z), measure now": N `locate_dot` reads → median (u,v), median-window depth from its own buffer, add marker offset, store the pair |
 | `/vision/calibration_compute` | `localization_node` | fit → validate RMS → write `calibration.yaml` → hot-swap the live transform |
 | `/vision/locate_dot` | `yolo_node` | red-dot inference on the latest color frame (only ultralytics importer) |
 
-Sequence: web **Calibrate** → `/cobot/calibrate` → `begin` → {move → settle →
-`sample`} × poses → `compute` → result in `/cobot/status` detail. Poses that fail
+Sequence: web **Calibrate** → `/task/calibrate` → `begin` → {`MoveToPose` → settle →
+`sample`} × poses → `compute` → result in `/task/status` detail. Poses that fail
 (unreachable, dot occluded, bad depth) are skipped; the fit is overdetermined.
 
 ### 10.4 Persistence & the no-fallback rule
@@ -578,7 +596,58 @@ fallback exists: an unmeasured transform must never move the robot.
 
 Prerequisites before running a calibration (all parameters):
 
-- `cobot_node.calibration_{x,y}_range_mm`, `calibration_z_levels_mm` — safe, reachable,
-  in-frame bounds; `[0,0]` means unconfigured and `/cobot/calibrate` refuses
+- `task_manager.calibration_{x,y}_range_mm`, `calibration_z_levels_mm` — safe, reachable,
+  in-frame bounds; `[0,0]` means unconfigured and `/task/calibrate` refuses
 - `localization_node.marker_offset_mm` — measured with a ruler after mounting the dot
 - `yolo_node.dot_model_path` — `red_dot_best.pt` in the models mount
+
+---
+
+## 11. Task manager — state machine + sequencing (`cobot_tasks`)
+
+Why it exists: in the first migration draft, `/vision/targets` being *published* was what
+*triggered* picking (cobot_node subscribed and immediately ran the layer). A data topic
+doubling as a command is fragile. The task manager makes "what should happen next" an
+explicit, single-owner decision, and turns cobot_node into a dumb, reliable motion server.
+
+**Ownership rule** — mirrors the calibration split (§10.3), one row per node:
+
+| node | owns | never does |
+|---|---|---|
+| `task_manager` | state machine, task loops, gating, progress | geometry math, motoman/camera access |
+| `cobot_node` | motion execution (actions) | decisions, vision calls, task state |
+| `localization_node` | geometry + calibration math | robot commands |
+| `yolo_node` | ML inference | geometry, robot commands |
+
+Dependency rule enforced in review: `cobot_tasks` depends on `rclpy` + `cobot_interfaces`
+ONLY. If a change makes it compute geometry or import robot/camera code, it has become a
+god-node — reject it. (It handles only small structured data: targets, poses, states;
+never a numpy array.)
+
+**Interface:**
+
+- `/task/start` · `/task/stop` · `/task/calibrate` (`std_srvs/Trigger`) — web routes here
+- `/task/status` (`TaskStatus`, latched) — THE operational state; web shows this
+- `/task/layer_report` (`LayerReport`) — task manager aggregates per-goal results
+- Action clients → `/cobot/pick_can`, `/cobot/move_to_pose`; service clients →
+  `/vision/scan`, `/vision/calibration_*`
+- Subscribes `/vision/targets` (data: consumed only while a scan it requested is in
+  flight, guarded by a timeout) and `/cobot/status` (hardware state, mirrored into
+  `/task/status` when idle)
+
+**State machine:**
+
+```
+IDLE ──start──▶ SCANNING ──targets──▶ PICKING ──layer done──▶ IDLE
+  │                 └─ timeout/none ──▶ ERROR / IDLE
+  └─calibrate─▶ CALIBRATING ── compute ok ─▶ IDLE   (fit rejected ─▶ ERROR)
+any task ──stop──▶ STOPPING ── active goal canceled ─▶ IDLE
+```
+
+One task at a time (`_operation_lock`, held for the whole task); anything but `stop` is
+refused while a task runs. Stop cancels the in-flight action goal **natively** — a pick
+stops at the next safe phase boundary (never between grip and lift) instead of waiting
+for the layer's next can, which is why the motion interface is actions, not services.
+
+Bin-cycle state (layer index, `BIN_COMPLETE`, tier-1 rescan decisions — §5) belongs here
+when it gets wired in: it is sequencing state, not perception or motion state.

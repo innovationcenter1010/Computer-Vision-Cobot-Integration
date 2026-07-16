@@ -32,6 +32,7 @@ def generate_launch_description():
         DeclareLaunchArgument("camera", default_value="true"),
         DeclareLaunchArgument("vision", default_value="true"),
         DeclareLaunchArgument("cobot", default_value="true"),
+        DeclareLaunchArgument("tasks", default_value="true"),
         DeclareLaunchArgument("web", default_value="true"),
     ]
 
@@ -74,6 +75,16 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration("cobot")),
             respawn=True,
             respawn_delay=5.0,
+            output="screen",
+        ),
+        Node(
+            package="cobot_tasks",
+            executable="task_manager_node",
+            name="task_manager",
+            parameters=[params_file],
+            condition=IfCondition(LaunchConfiguration("tasks")),
+            respawn=True,
+            respawn_delay=2.0,
             output="screen",
         ),
         Node(

@@ -227,12 +227,26 @@ class Cobot:
 
     
 
-    async def pick_and_place(self, can):
+    async def pick_and_place(self, can, should_abort=None, on_phase=None):
         # `can` is anything with real_x / real_y / real_rz attributes —
         # legacy OBBDetection or a cobot_interfaces/CanTarget message.
+        # `should_abort` / `on_phase` are optional hooks from the action
+        # server. Abort is honored at phase boundaries only, and NEVER
+        # between grip and lift — a cancel can leave a can gripped at a
+        # safe stationary pose, but never mid-descent or mid-grip.
 
         pick_and_place_report = Cobot_Operation_Report("PICK AND PLACE REPORT")
         interpolation_offset = PositionOffset()
+
+        def phase(name):
+            if on_phase is not None:
+                on_phase(name)
+
+        def aborted():
+            if should_abort is not None and should_abort():
+                pick_and_place_report.overall_status = Cobot_Operation_Status.job_failure
+                return True
+            return False
 
         tooling_offset_z = self.cobot_configs["tool_head_length_mm"]
         tooling_offset_xy = self.cobot_configs["tool_head_xy_offset"]
@@ -247,32 +261,45 @@ class Cobot:
             [cobot_pickup_position,interpolation_offset]]
         
 
+        phase("check")
         movement_report = await self.goto(motoman_cpp.Position(*self.targets["check"]),interpolation_offset)
         pick_and_place_report.add_report(movement_report)
 
+        if aborted(): return pick_and_place_report
+
+        phase("approach")
         for position in pickup_trajectory:
+            if aborted(): return pick_and_place_report
             movement_report = await self.goto(*position)
             pick_and_place_report.add_report(movement_report)
 
         if(pick_and_place_report.results[len(pick_and_place_report.results) -1].status.status_code !=0): return pick_and_place_report
 
+        # no abort between grip and lift — never leave the arm parked at
+        # pick depth with the gripper engaged
+        phase("grip")
         gripper_report = self._set_gripper(GRIPPER_ON)
         pick_and_place_report.add_report(gripper_report)
 
+        phase("lift")
         movement_report = await self.goto(cobot_up,None)
         pick_and_place_report.add_report(movement_report)
 
-        #move to the check position 
+        #move to the check position
         movement_report = await self.goto(motoman_cpp.Position(*self.targets["check"]),interpolation_offset)
         pick_and_place_report.add_report(movement_report)
 
-        
+
         await self._assert_sensor(pick_and_place_report,self.sensors["existance_check"],True)
         divot_detection = await self._read_sensor(pick_and_place_report,self.sensors["divot_check"])
 
         right_detection = await self._read_sensor(pick_and_place_report,self.sensors["right_complete"])
         left_detection = await self._read_sensor(pick_and_place_report,self.sensors["left_complete"])
 
+        # last safe abort point: can gripped, arm stationary at check position
+        if aborted(): return pick_and_place_report
+
+        phase("place")
         place_trajectory = []
         just_placed: place_position
 

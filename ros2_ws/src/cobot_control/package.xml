@@ -5,10 +5,11 @@
   <version>0.1.0</version>
   <description>
     Single cobot node (Python, pybind — NOT a C++ ROS node).
-    cobot_node is the high-level controller: it decides which operation to run
-    based on input (targets from vision → pick_layer; Trigger services →
-    start/stop/calibrate). The Cobot class drives the Motoman through the
-    motoman_cpp pybind extension exactly as the legacy application did.
+    cobot_node is the motion execution server: it serves the PickCan and
+    MoveToPose actions (one goal at a time, native cancel) — all decisions
+    and sequencing live in cobot_tasks/task_manager. The Cobot class drives
+    the Motoman through the motoman_cpp pybind extension exactly as the
+    legacy application did.
   </description>
   <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
   <license>MIT</license>

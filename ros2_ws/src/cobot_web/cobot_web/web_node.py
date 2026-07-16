@@ -49,7 +49,7 @@ from rcl_interfaces.srv import SetParameters
 from sensor_msgs.msg import Image
 from std_srvs.srv import Trigger
 
-from cobot_interfaces.msg import CanTargetArray, CobotStatus, LayerReport
+from cobot_interfaces.msg import CanTargetArray, LayerReport, TaskStatus
 
 
 SENSOR_QOS = QoSProfile(
@@ -61,22 +61,25 @@ SENSOR_QOS = QoSProfile(
 LATCHED_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 # Legacy COMMAND_TRANSLATOR, reshaped: (receiver, command) → Trigger service.
+# Operations go to the task manager — it owns the state machine and drives
+# cobot_node/vision itself. Only display-only commands hit nodes directly.
 COMMAND_ROUTES = {
-    ("VISION", "detect"): "/vision/scan",
-    ("COBOT", "start"): "/cobot/start",
-    ("COBOT", "pickup"): "/cobot/start",  # pickup == start the scan→pick cycle
-    ("COBOT", "stop"): "/cobot/stop",
-    ("COBOT", "calibrate"): "/cobot/calibrate",
+    ("VISION", "detect"): "/vision/scan",  # display-only scan (nothing moves)
+    ("COBOT", "start"): "/task/start",
+    ("COBOT", "pickup"): "/task/start",  # pickup == start the scan→pick cycle
+    ("COBOT", "stop"): "/task/stop",
+    ("COBOT", "calibrate"): "/task/calibrate",
     ("CAMERA", "save"): "/camera/save_frames",  # capture pair → vision_workspace
 }
 
-COBOT_STATE_NAMES = {
-    CobotStatus.STATE_DISCONNECTED: "disconnected",
-    CobotStatus.STATE_IDLE: "idle",
-    CobotStatus.STATE_PICKING: "picking",
-    CobotStatus.STATE_STOPPING: "stopping",
-    CobotStatus.STATE_ERROR: "error",
-    CobotStatus.STATE_CALIBRATING: "calibrating",
+TASK_STATE_NAMES = {
+    TaskStatus.STATE_DISCONNECTED: "disconnected",
+    TaskStatus.STATE_IDLE: "idle",
+    TaskStatus.STATE_SCANNING: "scanning",
+    TaskStatus.STATE_PICKING: "picking",
+    TaskStatus.STATE_CALIBRATING: "calibrating",
+    TaskStatus.STATE_STOPPING: "stopping",
+    TaskStatus.STATE_ERROR: "error",
 }
 
 
@@ -117,8 +120,8 @@ class WebNode(Node):
         self.create_subscription(Image, "/camera/color/image_raw", self._on_color, SENSOR_QOS)
         self.create_subscription(Image, "/camera/depth/image_raw", self._on_depth, SENSOR_QOS)
         self.create_subscription(CanTargetArray, "/vision/targets", self._on_targets, 10)
-        self.create_subscription(CobotStatus, "/cobot/status", self._on_status, LATCHED_QOS)
-        self.create_subscription(LayerReport, "/cobot/layer_report", self._on_report, 10)
+        self.create_subscription(TaskStatus, "/task/status", self._on_status, LATCHED_QOS)
+        self.create_subscription(LayerReport, "/task/layer_report", self._on_report, 10)
 
         self._trigger_clients = {
             route: self.create_client(Trigger, route)
@@ -188,12 +191,17 @@ class WebNode(Node):
             }
         )
 
-    def _on_status(self, msg: CobotStatus):
+    def _on_status(self, msg: TaskStatus):
+        # Websocket type stays "cobot_status" — app.js contract unchanged.
+        # progress/active_task are additive; the UI can ignore them.
         self.broadcast(
             {
                 "type": "cobot_status",
-                "state": COBOT_STATE_NAMES.get(msg.state, "unknown"),
+                "state": TASK_STATE_NAMES.get(msg.state, "unknown"),
                 "detail": msg.detail,
+                "active_task": msg.active_task,
+                "progress_current": msg.progress_current,
+                "progress_total": msg.progress_total,
             }
         )
 

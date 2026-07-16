@@ -18,6 +18,8 @@
   <exec_depend>rosidl_default_runtime</exec_depend>
 
   <depend>std_msgs</depend>
+  <!-- required by rosidl for the .action files -->
+  <depend>action_msgs</depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>
 

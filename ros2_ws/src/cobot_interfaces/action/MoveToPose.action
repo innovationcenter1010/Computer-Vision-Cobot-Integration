@@ -1,0 +1,14 @@
+# One supervised cartesian move (mm / degrees, robot base frame).
+# Used by the task manager's calibration grid loop; also useful for jogging.
+# Cancel policy: a single move runs to completion (the pybind layer has no
+# mid-motion stop) — a cancel marks the goal canceled once the move settles.
+float64 x
+float64 y
+float64 z
+float64 rx
+float64 ry
+float64 rz
+---
+bool success
+string message
+---

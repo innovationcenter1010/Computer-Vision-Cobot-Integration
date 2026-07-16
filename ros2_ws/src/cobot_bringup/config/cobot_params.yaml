@@ -61,10 +61,17 @@ cobot_node:
     tool_head_length_mm: 620.0
     tool_head_xy_offset: 0.0
     tool_head_compression_distance_mm: 50.0
-    # --- calibration pose grid (movement side) ---
+    # trajectories_file is injected by robot.launch.py (share path);
+    # set it here only to override.
+
+task_manager:
+  ros__parameters:
+    # How long after /vision/scan to wait for the targets message.
+    scan_timeout_sec: 30.0
+    # --- calibration pose grid (sequencing side; math in localization_node) ---
     # SET SAFE, REACHABLE BOUNDS: every pose must keep the marker inside the
     # camera frame and the arm clear of the bin. [0,0] = not configured;
-    # /cobot/calibrate refuses to run until these are set.
+    # /task/calibrate refuses to run until these are set.
     calibration_x_range_mm: [0.0, 0.0]
     calibration_y_range_mm: [0.0, 0.0]
     # At least two heights >=30mm apart or the fit is rejected (Z unconstrained).
@@ -72,8 +79,6 @@ cobot_node:
     calibration_grid_size: [3, 2]        # nx, ny poses per z level
     calibration_orientation_deg: [180.0, 0.0, 0.0]   # rx, ry, rz for every pose
     calibration_settle_sec: 0.5
-    # trajectories_file is injected by robot.launch.py (share path);
-    # set it here only to override.
 
 web_node:
   ros__parameters:

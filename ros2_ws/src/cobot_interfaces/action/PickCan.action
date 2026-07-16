@@ -1,0 +1,11 @@
+# Pick ONE can and place it (cobot_node choreography). The layer loop lives
+# in the task manager, which sends these goals sequentially.
+# Cancel policy: honored at the next safe phase boundary — never between
+# grip and lift, so a cancel can leave the arm holding a can at the check
+# position (result.message says which phase it stopped in).
+CanTarget target
+---
+bool success
+string message
+---
+string phase    # check / approach / grip / lift / place — mirrors choreography

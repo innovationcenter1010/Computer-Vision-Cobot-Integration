@@ -56,6 +56,7 @@ COPY ros2_ws/src/cobot_camera/package.xml      src/cobot_camera/package.xml
 COPY ros2_ws/src/cobot_vision/package.xml      src/cobot_vision/package.xml
 COPY ros2_ws/src/motoman_cpp/package.xml       src/motoman_cpp/package.xml
 COPY ros2_ws/src/cobot_control/package.xml     src/cobot_control/package.xml
+COPY ros2_ws/src/cobot_tasks/package.xml       src/cobot_tasks/package.xml
 COPY ros2_ws/src/cobot_web/package.xml         src/cobot_web/package.xml
 COPY ros2_ws/src/cobot_bringup/package.xml     src/cobot_bringup/package.xml
 

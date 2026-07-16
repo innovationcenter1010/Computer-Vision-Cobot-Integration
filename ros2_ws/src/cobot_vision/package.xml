@@ -13,7 +13,7 @@
                            (px + depth → base-frame xyz, calibration.py), rz
                            from corners, snake pick ordering. Owns the
                            calibration math services (begin/sample/compute;
-                           cobot_node drives the robot between them) and the
+                           task_manager drives the robot between them) and the
                            cheap tier-1 depth checks (VerifyTarget,
                            GetLayerHeight). Refuses to localize uncalibrated.
     train_yolo_obb.py is an offline tool, not a node.
