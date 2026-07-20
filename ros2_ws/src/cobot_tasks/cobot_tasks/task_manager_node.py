@@ -77,6 +77,16 @@ class TaskManagerNode(Node):
         self.declare_parameter("calibration_orientation_deg", [180.0, 0.0, 0.0])
         self.declare_parameter("calibration_settle_sec", 0.5)
 
+        # Auto extrinsic re-calibration at startup: with intrinsics known (from
+        # the camera SDK), a small grid corrects for camera drift each boot.
+        # The arm MOVES automatically at launch — set the grid bounds above and
+        # keep this off if that is unsafe for your cell.
+        self.declare_parameter("auto_calibrate_on_startup", True)
+        self.declare_parameter("startup_calibration_grid_size", [2, 2])
+        self.declare_parameter("startup_calibration_z_levels_mm", [-200.0, 200.0])
+        # How long to wait for the robot + services before giving up the boot run.
+        self.declare_parameter("startup_calibration_wait_sec", 120.0)
+
         self._status_pub = self.create_publisher(TaskStatus, "/task/status", LATCHED_QOS)
         self._report_pub = self.create_publisher(LayerReport, "/task/layer_report", 10)
 
@@ -120,6 +130,11 @@ class TaskManagerNode(Node):
         self._publish_status(
             TaskStatus.STATE_DISCONNECTED, "waiting for /cobot/status from cobot_node"
         )
+
+        # Kick off the auto startup calibration in the background — it waits
+        # for the robot and services, then runs the small extrinsic grid once.
+        if self.get_parameter("auto_calibrate_on_startup").value:
+            threading.Thread(target=self._run_startup_calibration, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Status helpers
@@ -265,8 +280,7 @@ class TaskManagerNode(Node):
             response.message = why
             return response
 
-        if list(self.get_parameter("calibration_x_range_mm").value) == [0.0, 0.0] or \
-           list(self.get_parameter("calibration_y_range_mm").value) == [0.0, 0.0] or \
+        if not self._grid_configured() or \
            list(self.get_parameter("calibration_z_levels_mm").value) == [0.0]:
             response.success = False
             response.message = (
@@ -296,7 +310,10 @@ class TaskManagerNode(Node):
             return response
 
         self._stop_requested.clear()
-        self._operation_thread = threading.Thread(target=self._run_calibration, daemon=True)
+        poses = self._calibration_poses("calibration_grid_size", "calibration_z_levels_mm")
+        self._operation_thread = threading.Thread(
+            target=self._run_calibration, args=(poses, "calibration"), daemon=True
+        )
         self._operation_thread.start()
 
         response.success = True
@@ -415,11 +432,14 @@ class TaskManagerNode(Node):
     # Task: calibration (movement loop here, math in localization_node)
     # ------------------------------------------------------------------
 
-    def _calibration_poses(self) -> list[tuple[float, float, float]]:
+    def _calibration_poses(self, grid_size_param: str, z_levels_param: str):
+        """Grid of (x, y, z) poses over the shared x/y ranges, from the named
+        grid-size and z-levels params — lets the full and startup runs share
+        one builder with different densities."""
         x_min, x_max = self.get_parameter("calibration_x_range_mm").value
         y_min, y_max = self.get_parameter("calibration_y_range_mm").value
-        z_levels = list(self.get_parameter("calibration_z_levels_mm").value)
-        nx, ny = (int(v) for v in self.get_parameter("calibration_grid_size").value)
+        z_levels = list(self.get_parameter(z_levels_param).value)
+        nx, ny = (int(v) for v in self.get_parameter(grid_size_param).value)
 
         # linspace by hand to avoid importing numpy just for this
         def spread(lo: float, hi: float, n: int) -> list[float]:
@@ -435,17 +455,64 @@ class TaskManagerNode(Node):
             for x in spread(x_min, x_max, nx)
         ]
 
-    def _run_calibration(self):
-        """Owns self._operation_lock (acquired by _on_calibrate); releases on exit."""
+    def _grid_configured(self) -> bool:
+        """True once the shared x/y ranges are set (zeros = unconfigured)."""
+        return not (
+            list(self.get_parameter("calibration_x_range_mm").value) == [0.0, 0.0]
+            or list(self.get_parameter("calibration_y_range_mm").value) == [0.0, 0.0]
+        )
+
+    def _run_startup_calibration(self):
+        """Auto extrinsic re-calibration at boot: wait for the robot and the
+        services, then run the small grid once. Skips (no motion) if the grid
+        is unconfigured or nothing comes up in time; a failed fit keeps the
+        previously saved transform."""
+        if not self._grid_configured():
+            self.get_logger().info(
+                "startup calibration skipped — calibration grid not configured"
+            )
+            return
+
+        deadline = time.monotonic() + float(
+            self.get_parameter("startup_calibration_wait_sec").value
+        )
+        while time.monotonic() < deadline:
+            ready, _ = self._robot_available()
+            services_up = (
+                self._move_client.server_is_ready()
+                and self._cal_begin_client.service_is_ready()
+                and self._cal_sample_client.service_is_ready()
+                and self._cal_compute_client.service_is_ready()
+            )
+            if ready and services_up:
+                break
+            time.sleep(1.0)
+        else:
+            self.get_logger().warn(
+                "startup calibration skipped — robot/services not ready in time"
+            )
+            return
+
+        if not self._operation_lock.acquire(blocking=False):
+            self.get_logger().info("startup calibration skipped — a task is already running")
+            return
+
+        self._stop_requested.clear()
+        poses = self._calibration_poses(
+            "startup_calibration_grid_size", "startup_calibration_z_levels_mm"
+        )
+        self._run_calibration(poses, "startup calibration")
+
+    def _run_calibration(self, poses, label: str):
+        """Owns self._operation_lock (acquired by the caller); releases on exit."""
         try:
-            poses = self._calibration_poses()
             rx, ry, rz = self.get_parameter("calibration_orientation_deg").value
             settle = float(self.get_parameter("calibration_settle_sec").value)
 
             self._publish_status(
                 TaskStatus.STATE_CALIBRATING,
-                f"starting: {len(poses)} poses",
-                "calibration",
+                f"{label} starting: {len(poses)} poses",
+                label,
                 0,
                 len(poses),
             )
@@ -454,7 +521,7 @@ class TaskManagerNode(Node):
             begin = self._call(self._cal_begin_client, Trigger.Request(), CAL_BEGIN_TIMEOUT_SEC)
             if not begin.success:
                 self._publish_status(
-                    TaskStatus.STATE_ERROR, f"calibration begin refused: {begin.message}"
+                    TaskStatus.STATE_ERROR, f"{label} begin refused: {begin.message}"
                 )
                 return
 
@@ -463,15 +530,15 @@ class TaskManagerNode(Node):
                 if self._stop_requested.is_set():
                     self._publish_status(
                         TaskStatus.STATE_IDLE,
-                        f"calibration aborted by stop at pose {index + 1}/{len(poses)}",
+                        f"{label} aborted by stop at pose {index + 1}/{len(poses)}",
                     )
                     return
 
-                label = f"pose {index + 1}/{len(poses)} ({x:.0f}, {y:.0f}, {z:.0f})"
+                pose_label = f"pose {index + 1}/{len(poses)} ({x:.0f}, {y:.0f}, {z:.0f})"
                 self._publish_status(
                     TaskStatus.STATE_CALIBRATING,
-                    f"{label} — {collected} samples so far",
-                    "calibration",
+                    f"{pose_label} — {collected} samples so far",
+                    label,
                     index + 1,
                     len(poses),
                 )
@@ -481,7 +548,7 @@ class TaskManagerNode(Node):
                     self._move_client, MoveToPose, "/cobot/move_to_pose", goal, MOVE_TIMEOUT_SEC
                 )
                 if not move.success:
-                    self.get_logger().warn(f"{label}: move failed — skipped ({move.message})")
+                    self.get_logger().warn(f"{pose_label}: move failed — skipped ({move.message})")
                     continue
 
                 time.sleep(settle)  # let vibration die before vision measures
@@ -494,12 +561,12 @@ class TaskManagerNode(Node):
                 if sample.success:
                     collected = sample.sample_count
                 else:
-                    self.get_logger().warn(f"{label}: no sample ({sample.message})")
+                    self.get_logger().warn(f"{pose_label}: no sample ({sample.message})")
 
             self._publish_status(
                 TaskStatus.STATE_CALIBRATING,
-                f"grid done: {collected} samples — computing transform",
-                "calibration",
+                f"{label}: grid done, {collected} samples — computing transform",
+                label,
                 len(poses),
                 len(poses),
             )
@@ -507,16 +574,16 @@ class TaskManagerNode(Node):
             compute = self._call(self._cal_compute_client, Trigger.Request(), CAL_COMPUTE_TIMEOUT_SEC)
             if compute.success:
                 self._publish_status(
-                    TaskStatus.STATE_IDLE, f"calibration complete: {compute.message}"
+                    TaskStatus.STATE_IDLE, f"{label} complete: {compute.message}"
                 )
             else:
                 self._publish_status(
-                    TaskStatus.STATE_ERROR, f"calibration failed: {compute.message}"
+                    TaskStatus.STATE_ERROR, f"{label} failed: {compute.message}"
                 )
 
         except Exception as e:  # noqa: BLE001 — a failed task must not kill the node
-            self.get_logger().error(f"calibration crashed: {e}")
-            self._publish_status(TaskStatus.STATE_ERROR, f"calibration crashed: {e}")
+            self.get_logger().error(f"{label} crashed: {e}")
+            self._publish_status(TaskStatus.STATE_ERROR, f"{label} crashed: {e}")
 
         finally:
             self._operation_lock.release()

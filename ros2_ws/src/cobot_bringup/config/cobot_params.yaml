@@ -16,6 +16,11 @@ camera_node:
     # /camera/save_frames writes timestamped color/depth PNG pairs here
     # (bind-mounted → appears on the host under vision_workspace/).
     capture_dir: "/ws/vision_workspace/operation/captures"
+    # Camera intrinsics JSON the streamer writes from its SDK; relayed as a
+    # latched /camera/color/camera_info. Use the COLOR intrinsics and enable
+    # depth->color alignment in the streamer so depth pixels match color.
+    # Schema: {"fx":..,"fy":..,"cx":..,"cy":..,"width":640,"height":480}
+    intrinsics_file: "/ws/vision_workspace/operation/camera_intrinsics.json"
 
 yolo_node:
   ros__parameters:
@@ -32,12 +37,12 @@ yolo_node:
 
 localization_node:
   ros__parameters:
-    # Bin outline in pixels (flattened 4x2, TL,TR,BR,BL) — get_layer_height ROI.
-    bin_image_corners_px: [3744.0, 1178.0, 4114.0, 4524.0, 492.0, 4408.0, 904.0, 1241.0]
-    # Bin outline in robot mm (flattened 4x2, TL,TR,BR,BL) — snake pick ordering.
-    bin_corners_mm: [448.22, -1600.0, -677.22, -1600.0, -677.22, -565.96, 448.22, -565.96]
-    can_height_mm: 87.0
+    # Pick order is a robot-frame snake (no bin corners — those go stale when
+    # the bin shifts). Rows are grouped along this robot axis ("x" or "y");
+    # the arm serpentines along the other axis within each row.
+    pathing_row_axis: "y"
     pathing_row_tolerance_mm: 50.0
+    can_height_mm: 87.0
     depth_buffer_size: 15
     depth_sample_window_px: 10
     verify_tolerance_mm: 40.0
@@ -50,9 +55,14 @@ localization_node:
     # the camera sees. MEASURE AND SET BEFORE CALIBRATING.
     marker_offset_mm: [0.0, 0.0, 0.0]
     dot_samples_per_pose: 3
-    calibration_min_samples: 8
+    calibration_min_samples: 6
     # Fit worse than this on any axis → calibration rejected, old transform kept.
     calibration_max_rms_mm: 5.0
+    # Intrinsics come from the camera SDK (/camera/color/camera_info). True:
+    # calibration is the small extrinsic-only (Kabsch) fit and refuses until
+    # intrinsics arrive. False: allow the full monolithic fit (needs the wide
+    # depth-span grid) when no intrinsics are available.
+    require_intrinsics: true
     # calibration_file is injected by robot.launch.py (bind-mounted config dir).
 
 cobot_node:
@@ -75,10 +85,18 @@ task_manager:
     calibration_x_range_mm: [0.0, 0.0]
     calibration_y_range_mm: [0.0, 0.0]
     # At least two heights >=30mm apart or the fit is rejected (Z unconstrained).
-    calibration_z_levels_mm: [0.0]
+    calibration_z_levels_mm: [-400,-200,0,200,400]
     calibration_grid_size: [3, 2]        # nx, ny poses per z level
     calibration_orientation_deg: [180.0, 0.0, 0.0]   # rx, ry, rz for every pose
     calibration_settle_sec: 0.5
+    # --- auto extrinsic re-calibration at startup ---
+    # With intrinsics known (camera SDK), a small grid corrects for camera
+    # drift each boot. THE ARM MOVES AT LAUNCH — needs the x/y ranges above
+    # set; disable if unattended motion at boot is unsafe for your cell.
+    auto_calibrate_on_startup: true
+    startup_calibration_grid_size: [2, 2]
+    startup_calibration_z_levels_mm: [-200.0, 200.0]
+    startup_calibration_wait_sec: 120.0
 
 web_node:
   ros__parameters:

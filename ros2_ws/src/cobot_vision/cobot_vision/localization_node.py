@@ -5,6 +5,7 @@ camera→robot calibration (see calibration.py):
 
   in:  /vision/detections_px (ObbDetectionArray)  — from yolo_node
        /camera/depth/image_raw (Image, 16SC1 mm)  — ring buffer, stamp-matched
+       /camera/color/camera_info (CameraInfo)      — camera-SDK intrinsics
   out: /vision/targets (CanTargetArray)           — ordered pick layer;
                                                      consumed by task_manager + web
 
@@ -13,10 +14,12 @@ localize (detections are dropped, verify_target errors) until a calibration
 run has completed. There is deliberately no fallback: an unmeasured transform
 must never move the robot.
 
-All spatial setup data (bin outlines, can height, marker offset) comes from
-cobot_params.yaml — parameter defaults here are deliberately zeros, and
-zero-valued spatial params mean "unconfigured": the dependent feature refuses
-to run instead of guessing.
+Spatial setup data (can height, marker offset) comes from cobot_params.yaml —
+parameter defaults here are deliberately zeros, and zero-valued spatial params
+mean "unconfigured": the dependent feature refuses to run instead of guessing.
+Nothing here depends on bin-corner coordinates: pick order is a robot-frame
+snake (pathing.py) and layer height is sampled at the live detection pixels,
+so both stay correct when the bin moves.
 
 Calibration split: task_manager drives the routine (/task/calibrate) by
 sending MoveToPose goals to cobot_node; this node owns every millimeter of
@@ -28,11 +31,16 @@ math. Between poses the task manager calls:
                                  sample own depth buffer, add marker offset,
                                  store the matched pair
   /vision/calibration_compute  — fit the 3x4 transform, validate RMS, persist
-                                 to calibration_file, hot-swap the live model
+                                 to calibration_file, hot-swap the live model.
+                                 With camera intrinsics known (CameraInfo) this
+                                 is the small extrinsic-only (Kabsch) fit; with
+                                 require_intrinsics:=false and no intrinsics it
+                                 falls back to the full monolithic fit.
 
 Tier-1 depth services (no ML):
   /vision/verify_target    — is a can still at this target's position?
-  /vision/get_layer_height — median depth over the bin ROI → layer index
+  /vision/get_layer_height — median depth at the last scan's detection pixels
+                             → layer index
 """
 
 import threading
@@ -47,9 +55,14 @@ import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import (
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy,
+    DurabilityPolicy,
+)
 
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CameraInfo, Image
 from std_srvs.srv import Trigger
 
 from cobot_interfaces.msg import CanTarget, CanTargetArray, ObbDetectionArray
@@ -61,7 +74,7 @@ from cobot_interfaces.srv import (
 )
 
 from cobot_vision.calibration import CalibrationError, CameraRobotCalibration
-from cobot_vision.pathing import order_obb_detections_by_real_position
+from cobot_vision.pathing import order_detections_snake
 from cobot_vision.rotation import calculate_real_rz
 
 
@@ -69,6 +82,14 @@ SENSOR_QOS = QoSProfile(
     reliability=ReliabilityPolicy.BEST_EFFORT,
     history=HistoryPolicy.KEEP_LAST,
     depth=1,
+)
+
+# Match camera_node's latched CameraInfo so we get the last value on subscribe.
+LATCHED_QOS = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
 )
 
 # locate_dot's first call lazy-loads the red-dot model (handled in _begin);
@@ -101,17 +122,14 @@ class LocalizationNode(Node):
     def __init__(self):
         super().__init__("localization_node")
 
-        # ---- workspace geometry: values live in cobot_params.yaml ----
-        # Bin outline in pixels, flattened 4x2 TL,TR,BR,BL — only used as the
-        # ROI for get_layer_height. All zeros = unconfigured.
-        self.declare_parameter("bin_image_corners_px", [0.0] * 8)
-        # Bin outline in robot mm, flattened 4x2 TL,TR,BR,BL — defines the
-        # bin-local axes for snake pick ordering (pathing.py). All zeros =
-        # unconfigured; detections are refused until set.
-        self.declare_parameter("bin_corners_mm", [0.0] * 8)
+        # ---- pick ordering: robot-frame snake, no bin geometry ----
+        # Rows are grouped along this robot axis ("x" or "y"); the arm
+        # serpentines along the other axis within each row. No bin corners:
+        # ordering must survive the bin shifting.
+        self.declare_parameter("pathing_row_axis", "y")
+        self.declare_parameter("pathing_row_tolerance_mm", 50.0)
 
         self.declare_parameter("can_height_mm", 0.0)
-        self.declare_parameter("pathing_row_tolerance_mm", 50.0)
 
         # ---- depth sampling ----
         self.declare_parameter("depth_buffer_size", 15)
@@ -134,13 +152,16 @@ class LocalizationNode(Node):
         self.declare_parameter("dot_samples_per_pose", 3)
         self.declare_parameter("calibration_min_samples", 8)
         self.declare_parameter("calibration_max_rms_mm", 5.0)
+        # Intrinsics come from the camera SDK via /camera/color/camera_info.
+        # True (default): calibration is the small extrinsic-only (Kabsch) fit
+        # and refuses to run until intrinsics arrive. False: fall back to the
+        # full monolithic fit that solves intrinsics + extrinsics together
+        # (needs the wide depth-span grid).
+        self.declare_parameter("require_intrinsics", True)
 
-        # Early, loud signal — the values normally arrive via the params YAML.
-        if self._corners_param("bin_corners_mm") is None:
-            self.get_logger().error(
-                "bin_corners_mm not configured — detections will be refused "
-                "(set it in cobot_params.yaml)"
-            )
+        # Latest camera intrinsics {fx, fy, cx, cy} or None until CameraInfo.
+        self._intrinsics_lock = threading.Lock()
+        self._intrinsics: dict | None = None
 
         self._calibration: CameraRobotCalibration | None = None
         self._load_calibration()
@@ -149,6 +170,12 @@ class LocalizationNode(Node):
         self._depth_buffer: deque = deque(
             maxlen=int(self.get_parameter("depth_buffer_size").value)
         )
+
+        # Pixel centers of the most recent scan's detections — get_layer_height
+        # samples the live depth frame here so the height check follows the
+        # cans (and the bin) instead of a fixed image region.
+        self._detection_px_lock = threading.Lock()
+        self._last_detection_px: list[tuple[float, float]] = []
 
         # Calibration sample buffer, filled between begin and compute.
         self._samples_uvd: list[list[float]] = []
@@ -159,6 +186,9 @@ class LocalizationNode(Node):
         )
         self.create_subscription(
             ObbDetectionArray, "/vision/detections_px", self._on_detections, 10
+        )
+        self.create_subscription(
+            CameraInfo, "/camera/color/camera_info", self._on_camera_info, LATCHED_QOS
         )
 
         self._targets_pub = self.create_publisher(CanTargetArray, "/vision/targets", 10)
@@ -189,18 +219,6 @@ class LocalizationNode(Node):
 
         self.get_logger().info("localization_node ready")
 
-    def _corners_param(self, name: str) -> list[list[float]] | None:
-        """4x[x,y] corners from a flattened param; None while unconfigured.
-
-        Read live (not cached) so /api/config edits apply without restart.
-        """
-        flat = list(self.get_parameter(name).value)
-        if len(flat) != 8:
-            raise ValueError(f"{name} must be 8 floats (4 corners x/y), got {len(flat)}")
-        if all(v == 0.0 for v in flat):
-            return None
-        return [[flat[i], flat[i + 1]] for i in range(0, 8, 2)]
-
     # ------------------------------------------------------------------
     # Calibration state
     # ------------------------------------------------------------------
@@ -224,12 +242,32 @@ class LocalizationNode(Node):
         except CalibrationError as e:
             self.get_logger().error(f"NOT CALIBRATED — {e}")
             return
+        # Seed intrinsics from the saved block so a startup extrinsic fit can
+        # run even before CameraInfo arrives (the live topic overrides later).
+        if self._calibration.intrinsics:
+            with self._intrinsics_lock:
+                self._intrinsics = dict(self._calibration.intrinsics)
         rms = self._calibration.rms_mm
         self.get_logger().info(
-            f"calibration loaded ({self._calibration.created}, "
-            f"{self._calibration.sample_count} samples, "
+            f"calibration loaded ({self._calibration.created}, source="
+            f"{self._calibration.source}, {self._calibration.sample_count} samples, "
             f"rms x={rms[0]:.1f} y={rms[1]:.1f} z={rms[2]:.1f} mm)"
         )
+
+    def _on_camera_info(self, msg: CameraInfo):
+        """Cache intrinsics from the camera SDK (relayed by camera_node)."""
+        fx, cx, fy, cy = msg.k[0], msg.k[2], msg.k[4], msg.k[5]
+        if fx == 0.0 or fy == 0.0:
+            return  # placeholder/empty CameraInfo — ignore
+        intrinsics = {"fx": float(fx), "fy": float(fy), "cx": float(cx), "cy": float(cy)}
+        with self._intrinsics_lock:
+            first = self._intrinsics is None
+            self._intrinsics = intrinsics
+        if first:
+            self.get_logger().info(
+                f"camera intrinsics received: fx={fx:.1f} fy={fy:.1f} "
+                f"cx={cx:.1f} cy={cy:.1f}"
+            )
 
     # ------------------------------------------------------------------
     # Depth handling
@@ -279,15 +317,6 @@ class LocalizationNode(Node):
             )
             return
 
-        bin_corners = self._corners_param("bin_corners_mm")
-        if bin_corners is None:
-            self.get_logger().error(
-                "detections dropped: bin_corners_mm not configured "
-                "(set it in cobot_params.yaml)",
-                throttle_duration_sec=5.0,
-            )
-            return
-
         depth = self._depth_frame_near(msg.header.stamp)
         if depth is None:
             self.get_logger().warn("detections dropped: no depth frame yet")
@@ -327,11 +356,16 @@ class LocalizationNode(Node):
 
             targets.append(target)
 
-        ordered = order_obb_detections_by_real_position(
+        ordered = order_detections_snake(
             detections=targets,
-            real_world_corners_mm=bin_corners,
+            row_axis=self.get_parameter("pathing_row_axis").value,
             row_tolerance_mm=self.get_parameter("pathing_row_tolerance_mm").value,
         )
+
+        # Remember where the cans were seen so get_layer_height can re-sample
+        # the live depth frame at those pixels (follows the bin if it moves).
+        with self._detection_px_lock:
+            self._last_detection_px = [(t.center_x, t.center_y) for t in ordered]
 
         out = CanTargetArray()
         out.header.stamp = msg.header.stamp
@@ -396,31 +430,28 @@ class LocalizationNode(Node):
             response.layer_index = -1
             return response
 
-        # Bin ROI = bounding box of the bin's pixel corners.
-        pixel_corners = self._corners_param("bin_image_corners_px")
-        if pixel_corners is None:
+        # Sample the live depth frame where the last scan saw cans — no fixed
+        # bin ROI, so the measurement tracks the cans (and the bin) if it moves.
+        with self._detection_px_lock:
+            centers = list(self._last_detection_px)
+        if not centers:
             self.get_logger().warn(
-                "get_layer_height refused: bin_image_corners_px not configured"
+                "get_layer_height: no recent detections to sample — run a scan first"
             )
             response.median_z = -1.0
             response.layer_index = -1
             return response
 
-        corners = np.array(pixel_corners)
-        h, w = depth.shape
-        x0 = max(0, int(corners[:, 0].min()))
-        x1 = min(w, int(corners[:, 0].max()))
-        y0 = max(0, int(corners[:, 1].min()))
-        y1 = min(h, int(corners[:, 1].max()))
-
-        roi = depth[y0:y1, x0:x1]
-        valid = roi[roi > 0]
-        if valid.size == 0:
+        samples = [
+            d for d in (self._sample_depth_mm(depth, px, py) for px, py in centers)
+            if d is not None
+        ]
+        if not samples:
             response.median_z = -1.0
             response.layer_index = -1
             return response
 
-        response.median_z = float(np.median(valid))
+        response.median_z = float(np.median(samples))
 
         depth_at_top = self.get_parameter("depth_at_top_layer_mm").value
         can_height = self.get_parameter("can_height_mm").value
@@ -456,6 +487,19 @@ class LocalizationNode(Node):
             response.success = False
             response.message = "calibration_file parameter is empty"
             return response
+
+        # Extrinsic mode needs the camera intrinsics first — refuse here so the
+        # task manager never moves the arm for a fit that can't complete.
+        if self.get_parameter("require_intrinsics").value:
+            with self._intrinsics_lock:
+                have_intrinsics = self._intrinsics is not None
+            if not have_intrinsics:
+                response.success = False
+                response.message = (
+                    "no camera intrinsics yet (waiting on /camera/color/camera_info "
+                    "— check the streamer's intrinsics file)"
+                )
+                return response
 
         if self._depth_frame_near(None) is None:
             response.success = False
@@ -533,6 +577,10 @@ class LocalizationNode(Node):
         min_samples = int(self.get_parameter("calibration_min_samples").value)
         max_rms = float(self.get_parameter("calibration_max_rms_mm").value)
         cal_file = self.get_parameter("calibration_file").value
+        require_intrinsics = self.get_parameter("require_intrinsics").value
+
+        with self._intrinsics_lock:
+            intrinsics = dict(self._intrinsics) if self._intrinsics else None
 
         if len(self._samples_uvd) < min_samples:
             response.success = False
@@ -542,8 +590,23 @@ class LocalizationNode(Node):
             )
             return response
 
+        # Known intrinsics → small extrinsic-only (Kabsch) fit. Otherwise fall
+        # back to the full monolithic fit, unless intrinsics are required.
         try:
-            fitted = CameraRobotCalibration.fit(self._samples_uvd, self._samples_xyz)
+            if intrinsics is not None:
+                fitted = CameraRobotCalibration.fit_extrinsic(
+                    self._samples_uvd, self._samples_xyz, intrinsics
+                )
+            elif require_intrinsics:
+                response.success = False
+                response.message = (
+                    "no camera intrinsics — extrinsic fit impossible "
+                    "(set require_intrinsics:=false to allow a full fit) — "
+                    "transform unchanged"
+                )
+                return response
+            else:
+                fitted = CameraRobotCalibration.fit(self._samples_uvd, self._samples_xyz)
         except CalibrationError as e:
             response.success = False
             response.message = f"{e} — transform unchanged"
@@ -565,7 +628,10 @@ class LocalizationNode(Node):
         self._samples_xyz.clear()
 
         response.success = True
-        response.message = f"{fitted.sample_count} samples, {rms_text}, saved to {cal_file}"
+        response.message = (
+            f"{fitted.source} fit, {fitted.sample_count} samples, "
+            f"{rms_text}, saved to {cal_file}"
+        )
         self.get_logger().info(f"[calibration] COMPLETE: {response.message}")
         return response
 

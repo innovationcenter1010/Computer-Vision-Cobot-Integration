@@ -36,6 +36,10 @@ vision_workspace/operation/results/
 vision_workspace/operation/captures/
 vision_workspace/models/training_runs/
 
+# --- Per-camera intrinsics (written by the streamer from the camera SDK,
+#     relayed as CameraInfo; belongs to this camera, not the repo) ---
+vision_workspace/operation/camera_intrinsics.json
+
 # --- Misc ---
 outputs/
 *.svg

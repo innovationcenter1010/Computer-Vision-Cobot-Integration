@@ -1,185 +1,71 @@
-import math
+"""Snake pick ordering in the ROBOT base frame — no bin geometry.
+
+Detections carry real_x / real_y (mm, robot base) from the camera->robot
+calibration. Ordering groups them into rows along one robot axis and
+serpentines along the other, so the arm finishes a row and snakes back on the
+next. This deliberately uses the robot axes directly instead of a bin-local
+frame: bin-corner coordinates go stale the moment the bin shifts, and the
+pick order does not need bin alignment — only a consistent traversal.
+"""
 
 
-def _subtract_points(point_a, point_b):
-    return (
-        float(point_a[0]) - float(point_b[0]),
-        float(point_a[1]) - float(point_b[1]),
-    )
+def _axis_getters(row_axis):
+    """(row_value, across_value) accessors for the chosen row axis.
 
-
-def _length(vector):
-    return math.sqrt(vector[0] ** 2 + vector[1] ** 2)
-
-
-def project_real_point_to_bin_axes(real_x, real_y, real_world_corners_mm):
+    row_axis groups rows (near-constant value per row); the other axis is the
+    serpentine direction within a row.
     """
-    Converts a real-world point into bin-local coordinates.
+    if row_axis == "y":
+        return (lambda d: d.real_y), (lambda d: d.real_x)
+    if row_axis == "x":
+        return (lambda d: d.real_x), (lambda d: d.real_y)
+    raise ValueError(f"pathing_row_axis must be 'x' or 'y', got {row_axis!r}")
 
-    real_world_corners_mm must be ordered:
-        [0] = top-left
-        [1] = top-right
-        [2] = bottom-right
-        [3] = bottom-left
 
-    Returns:
-        across_mm:
-            Distance from top-left toward top-right.
+def order_detections_snake(detections, row_axis="y", row_tolerance_mm=50.0):
+    """Order detections in a robot-frame snake pattern.
 
-        down_mm:
-            Distance from top-left toward bottom-left.
+    - rows: bands of near-constant position along `row_axis` (within
+      row_tolerance_mm), traversed from the smallest row value upward
+    - within a row: sorted along the other axis, alternating direction each
+      row so the path snakes instead of jumping back
 
-    This uses a 2D basis solve instead of simple dot products, so it works
-    better if the bin is rotated in robot coordinates.
+    Returns the same detection objects, reordered. Each detection's
+    path_down_mm / path_across_mm are set for debugging (they do not affect
+    robot movement).
     """
-
-    top_left = real_world_corners_mm[0]
-    top_right = real_world_corners_mm[1]
-    bottom_left = real_world_corners_mm[3]
-
-    right_vector = _subtract_points(top_right, top_left)
-    down_vector = _subtract_points(bottom_left, top_left)
-
-    point_vector = _subtract_points(
-        (real_x, real_y),
-        top_left,
-    )
-
-    rx, ry = right_vector
-    dx, dy = down_vector
-    px, py = point_vector
-
-    determinant = rx * dy - ry * dx
-
-    if abs(determinant) < 1e-9:
-        raise ValueError(
-            "Invalid real_world_corners_mm: top-left, top-right, and bottom-left "
-            "do not form a usable bin coordinate system."
-        )
-
-    # Solve:
-    # point = top_left + u * right_vector + v * down_vector
-    u = (px * dy - py * dx) / determinant
-    v = (rx * py - ry * px) / determinant
-
-    bin_width_mm = _length(right_vector)
-    bin_height_mm = _length(down_vector)
-
-    across_mm = u * bin_width_mm
-    down_mm = v * bin_height_mm
-
-    return across_mm, down_mm
-
-
-def order_obb_detections_by_real_position(
-    detections,
-    real_world_corners_mm,
-    row_tolerance_mm,
-):
-    """
-    Orders YOLO OBB detections in a snake pattern using real-world bin coordinates.
-
-    The path starts closest to the real-world top-left bin corner:
-        row 1: left  -> right
-        row 2: right -> left
-        row 3: left  -> right
-
-    Returns:
-        The same OBBDetection objects, reordered.
-    """
-
     if len(detections) == 0:
         return []
 
-    projected = []
+    row_value, across_value = _axis_getters(row_axis)
 
     for detection in detections:
         if detection.real_x is None or detection.real_y is None:
             raise ValueError(
-                "Detection must have real_x and real_y before pathing. "
-                "Apply the camera->robot calibration transform before calling "
-                "order_obb_detections_by_real_position()."
+                "Detection must have real_x and real_y before pathing. Apply "
+                "the camera->robot calibration transform before ordering."
             )
+        detection.path_down_mm = row_value(detection)
+        detection.path_across_mm = across_value(detection)
 
-        across_mm, down_mm = project_real_point_to_bin_axes(
-            detection.real_x,
-            detection.real_y,
-            real_world_corners_mm,
-        )
-
-        # These are only for debugging. They do not affect robot movement.
-        detection.path_across_mm = across_mm
-        detection.path_down_mm = down_mm
-
-        projected.append(
-            {
-                "detection": detection,
-                "across_mm": across_mm,
-                "down_mm": down_mm,
-            }
-        )
-
-    # Sort from top of bin to bottom of bin.
-    projected.sort(key=lambda item: item["down_mm"])
+    ordered_by_row = sorted(detections, key=row_value)
 
     rows = []
-    current_row = [projected[0]]
-
-    for item in projected[1:]:
-        current_row_down_average = (
-            sum(row_item["down_mm"] for row_item in current_row)
-            / len(current_row)
+    current_row = [ordered_by_row[0]]
+    for detection in ordered_by_row[1:]:
+        current_row_average = (
+            sum(row_value(d) for d in current_row) / len(current_row)
         )
-
-        if abs(item["down_mm"] - current_row_down_average) <= row_tolerance_mm:
-            current_row.append(item)
+        if abs(row_value(detection) - current_row_average) <= row_tolerance_mm:
+            current_row.append(detection)
         else:
             rows.append(current_row)
-            current_row = [item]
-
+            current_row = [detection]
     rows.append(current_row)
 
-    ordered_detections = []
-
+    ordered = []
     for row_index, row in enumerate(rows):
-        if row_index % 2 == 0:
-            # First row starts closest to top-left.
-            row_sorted = sorted(row, key=lambda item: item["across_mm"])
-        else:
-            # Next row snakes back.
-            row_sorted = sorted(
-                row,
-                key=lambda item: item["across_mm"],
-                reverse=True,
-            )
+        snake_back = row_index % 2 == 1
+        ordered.extend(sorted(row, key=across_value, reverse=snake_back))
 
-        ordered_detections.extend(
-            item["detection"]
-            for item in row_sorted
-        )
-
-    return ordered_detections
-
-
-def print_obb_order(detections, real_world_corners_mm):
-    """
-    Prints ordered OBBDetection objects using bin-local pathing coordinates.
-    """
-
-    print("Ordered OBB detections:")
-
-    for i, detection in enumerate(detections):
-        across_mm, down_mm = project_real_point_to_bin_axes(
-            detection.real_x,
-            detection.real_y,
-            real_world_corners_mm,
-        )
-
-        print(
-            f"{i + 1}: "
-            f"real=({detection.real_x:.2f}, {detection.real_y:.2f}), "
-            f"path_across={across_mm:.2f}, "
-            f"path_down={down_mm:.2f}, "
-            f"confidence={detection.confidence:.3f}",
-            flush=True,
-        )
+    return ordered

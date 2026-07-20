@@ -94,7 +94,11 @@ become publisher calls.
 
 - Publishes `/camera/color/image_raw` — `sensor_msgs/Image`, `rgb8`
 - Publishes `/camera/depth/image_raw` — `sensor_msgs/Image`, `mono16` (depth is already int16 mm)
-- QoS: best-effort, keep-last(1) — freshest frame wins, no backlog
+- Publishes `/camera/color/camera_info` — `sensor_msgs/CameraInfo`, latched. Relays the
+  camera-SDK **intrinsics** the streamer writes to a small JSON (`intrinsics_file`, in the
+  bind-mounted vision_workspace). Static data → published once and re-read only on file
+  change, not per frame. localization consumes it for the extrinsic startup calibration (§10)
+- QoS: images best-effort keep-last(1) (freshest wins); CameraInfo reliable transient-local
 - ZMQ endpoints become **parameters** (they are currently hardcoded in `camera_streamer.py`;
   the `camera` section of `config.JSON` was never actually read)
 - The legacy `snapshot` / `get_stream_provider` commands disappear — consumers subscribe.
@@ -131,12 +135,16 @@ become publisher calls.
     consistent 3D model replaces the legacy planar homography AND the hardcoded
     `LAYER_Z1..Z7` table
   - `real_rz` from OBB corners (`rotation.py`), corners mapped through the same transform
-  - pick ordering (`pathing.py` — lives here because ordering is done in real space)
+  - pick ordering (`pathing.py`) — a **robot-frame snake**: rows grouped along one robot
+    axis (`pathing_row_axis`), serpentine along the other. No bin-corner coordinates, so
+    the order survives the bin shifting
 - Publishes `/vision/targets` (`CanTargetArray`) — consumed by `task_manager` (data for the
   pick cycle it requested) and `web_node` (display)
 - Services (cheap depth reads, no ML — see §5):
   - `/vision/verify_target` — is a can still at (x, y), and at what measured z?
-  - `/vision/get_layer_height` — median depth over the bin ROI → current layer index
+  - `/vision/get_layer_height` — median live depth **at the last scan's detection pixels**
+    → current layer index. Sampling where the cans were seen (not a fixed image ROI) keeps
+    the height check valid when the bin moves
 - Calibration math services (`task_manager` drives the robot between calls — see §10):
   - `/vision/calibration_begin` · `/vision/calibration_sample` · `/vision/calibration_compute`
 
@@ -194,7 +202,7 @@ msg/TaskStatus.msg          # OPERATIONAL state: idle/scanning/picking/calibrati
                             # stopping/error + detail + active_task + progress   (§11)
 msg/LayerReport.msg         # successes, failures, overall_ok
 srv/VerifyTarget.srv        # CanTarget → bool present, float64 measured_z
-srv/GetLayerHeight.srv      # (bin ROI from params) → float64 median_z, int8 layer_index
+srv/GetLayerHeight.srv      # (samples last detection pixels) → float64 median_z, int8 layer_index
 srv/LocateDot.srv           # () → found, dot center px (u, v), confidence     (§10)
 srv/CalibrationSample.srv   # commanded TCP (x, y, z) → success, sample_count  (§10)
 action/PickCan.action       # goal CanTarget → success/message; feedback phase (§11)
@@ -217,7 +225,7 @@ YOLO must not run per pick. The design uses three tiers of sensing cost; the dep
 | Tier | Sensor | Cost | Question |
 |---|---|---|---|
 | 0 | Gripper sensors (`existance_check`) | free | "Did I actually grab something?" |
-| 1 | **Depth sampling** (localization_node srvs) | ~µs, no ML | "Is a can still at (x,y)? What height is the layer?" |
+| 1 | **Depth sampling** (localization_node srvs) | ~µs, no ML | "Is a can still at (x,y)? What height is the layer, sampled where the cans were seen?" |
 | 2 | **YOLO scan** (yolo_node) | expensive | "Where is everything and how is it rotated?" |
 
 The task manager drives the cycle (pick execution = one `PickCan` goal per can):
@@ -235,7 +243,7 @@ The task manager drives the cycle (pick execution = one `PickCan` goal per can):
       │      free window for any rescan)       │
       └─────────────────┬──────────────────────┘
                         ▼
-  targets exhausted ──▶ /vision/get_layer_height (depth over bin ROI)
+  targets exhausted ──▶ /vision/get_layer_height (depth at last detection pixels)
                         ├─ dropped ~can_height? ──▶ scan next layer
                         ├─ leftovers at old height? ──▶ rescan same layer
                         └─ at bin floor? ──▶ BIN_COMPLETE
@@ -270,7 +278,7 @@ trajectories.
 | Kind | Examples | ROS2 home |
 |---|---|---|
 | Tunable scalars | YOLO conf/iou/max_det, `can_height_mm`, `layer_threshold`, row tolerance, `robot_ip`, tool-head offsets | **Declared ROS parameters** per owning node |
-| Structured data | `cobot_place_trajectories` (named waypoint lists), bin corner matrices | Corners flatten to 8-float params; trajectories stay a **JSON file** referenced by a path param |
+| Structured data | `cobot_place_trajectories` (named waypoint lists) | trajectories stay a **JSON file** referenced by a path param (bin-corner matrices retired — pick order is a robot-frame snake, layer height samples the detection pixels) |
 | Offline / dead | `TRAIN_MODEL`, `TRAINING_*` (offline tool); `camera` section (never read — endpoints were hardcoded) | Not ROS params. Training config goes with the offline tool; camera endpoints become real params for the first time |
 
 One YAML in `cobot_bringup` replaces the global object:
@@ -295,10 +303,11 @@ localization_node:
   ros__parameters:
     # Spatial setup data lives HERE, never as code defaults (defaults are
     # zeros = unconfigured; dependent features refuse to run until set).
-    bin_image_corners_px: [3744.0,1178.0, 4114.0,4524.0, 492.0,4408.0, 904.0,1241.0]
-    bin_corners_mm: [448.22,-1600.0, -677.22,-1600.0, -677.22,-565.96, 448.22,-565.96]
-    can_height_mm: 87.0
+    # No bin corners: pick order is a robot-frame snake and layer height is
+    # sampled at the live detection pixels, so both survive the bin moving.
+    pathing_row_axis: "y"               # rows along robot Y, serpentine along X
     pathing_row_tolerance_mm: 50.0
+    can_height_mm: 87.0
     marker_offset_mm: [0.0, 0.0, 0.0]   # measured after mounting the dot (§10)
 
 cobot_node:
@@ -550,17 +559,48 @@ the features `[u·d, v·d, d, 1]`** (back-projection is `X_cam = (u−cx)·d/fx`
 matrix `M` maps pixel + depth straight to robot base mm:
 
 ```
-[X, Y, Z]ᵀ = M · [u·d,  v·d,  d,  1]ᵀ
+[X, Y, Z]ᵀ = M · [u·d,  v·d,  d,  1]ᵀ        M = [ R·B | t ]
 ```
 
-Least-squares over the samples absorbs the intrinsics — no CameraInfo needed. The fit
-**requires depth variation** (≥30 mm span) or it is rejected: with one height the
-feature matrix is rank-3 and Z is unconstrained. This is the "sample at multiple
-heights" rule enforced in math. Per-axis RMS residuals are the honest quality measure;
-a fit above `calibration_max_rms_mm` is rejected and the old transform kept.
+`M` factors into the two physical parts: **intrinsics** `B` (a static 3×3 holding
+`fx, fy, cx, cy`) and **extrinsics** `R, t` (the camera pose vs the cobot base — the
+only part that drifts when the camera is bumped). Two fitters:
 
-The inverse (robot xyz → expected pixel + depth) is closed-form and powers
-`/vision/verify_target`.
+- **`fit()` — full monolithic.** Solves all 12 numbers at once, absorbing intrinsics; no
+  CameraInfo needed. **Requires depth variation** (≥30 mm span) or it is rejected — with
+  one height the feature matrix is rank-3 and Z is unconstrained ("sample at multiple
+  heights", enforced in math).
+- **`fit_extrinsic()` — Kabsch, with known intrinsics.** Back-projects each sample to a
+  camera-frame 3D point using the fixed intrinsics, then solves the rigid transform
+  `{P_cam}→{P_robot}` in closed form (SVD). Only **6 unknowns**, so ~4 poses suffice and
+  the depth-span rule **relaxes** (Z = d is measured, not fit). Returns a *pure rotation*,
+  so it can't drift into unphysical scale/shear. This is the small startup fit.
+
+Per-axis RMS residuals are the honest quality measure either way; a fit above
+`calibration_max_rms_mm` is rejected and the old transform kept. The inverse (robot xyz →
+expected pixel + depth) is closed-form and powers `/vision/verify_target`.
+
+### 10.1a Best of both worlds — static intrinsics, dynamic extrinsics
+
+Intrinsics are bolted into the sensor; only the camera *pose* moves. So they are sourced
+**once, statically** and the pose is re-fit **cheaply, often**:
+
+- **Intrinsics (static):** the camera SDK already knows `fx, fy, cx, cy`. The external
+  streamer writes them to `intrinsics_file`; `camera_node` relays them as latched
+  `/camera/color/camera_info`; localization caches them and also persists them into
+  `calibration.yaml` (`camera_intrinsics` block) so they survive a silent camera.
+- **Extrinsics (dynamic):** every boot, `task_manager` auto-runs a small extrinsic grid
+  (`fit_extrinsic`) to correct for camera drift — see §11. No intrinsics re-measurement.
+
+`require_intrinsics` (default true) makes calibration the extrinsic-only fit and refuses
+until intrinsics arrive; set it false to allow the full monolithic fit when the camera
+can't report intrinsics.
+
+> **Depth must be aligned to color.** localization samples depth at the *color* pixel of
+> each detection/dot and back-projects with the *color* intrinsics. That is only valid
+> when the streamer has **depth→color registration ON**; otherwise the depth reading is
+> from the wrong physical ray. Enable alignment in the streamer and publish the color
+> intrinsics.
 
 ### 10.2 The marker offset
 
@@ -579,12 +619,18 @@ axes at that orientation**, to the dot surface the camera sees.
 | `/cobot/move_to_pose` | `cobot_node` | executes each grid move (the only node touching motoman) |
 | `/vision/calibration_begin` | `localization_node` | clears the sample buffer, warms the red-dot model |
 | `/vision/calibration_sample` | `localization_node` | "marker parked at TCP (x,y,z), measure now": N `locate_dot` reads → median (u,v), median-window depth from its own buffer, add marker offset, store the pair |
-| `/vision/calibration_compute` | `localization_node` | fit → validate RMS → write `calibration.yaml` → hot-swap the live transform |
+| `/vision/calibration_compute` | `localization_node` | mode-select (extrinsic if intrinsics known, else full) → validate RMS → write `calibration.yaml` → hot-swap the live transform |
 | `/vision/locate_dot` | `yolo_node` | red-dot inference on the latest color frame (only ultralytics importer) |
+| `/camera/color/camera_info` | `camera_node` | relays the SDK intrinsics (from the streamer's JSON) that make the extrinsic fit possible |
 
 Sequence: web **Calibrate** → `/task/calibrate` → `begin` → {`MoveToPose` → settle →
 `sample`} × poses → `compute` → result in `/task/status` detail. Poses that fail
 (unreachable, dot occluded, bad depth) are skipped; the fit is overdetermined.
+
+The same sequence runs **automatically at startup** on a small grid
+(`startup_calibration_*`) to re-fit extrinsics for camera drift — see §11. `begin`
+refuses (no motion) until CameraInfo intrinsics have arrived, so a boot with no camera
+never moves the arm for a fit that can't complete.
 
 ### 10.4 Persistence & the no-fallback rule
 
@@ -600,6 +646,9 @@ Prerequisites before running a calibration (all parameters):
   in-frame bounds; `[0,0]` means unconfigured and `/task/calibrate` refuses
 - `localization_node.marker_offset_mm` — measured with a ruler after mounting the dot
 - `yolo_node.dot_model_path` — `red_dot_best.pt` in the models mount
+- Camera intrinsics available: the streamer writes `intrinsics_file` (color intrinsics,
+  depth→color alignment ON), relayed as `/camera/color/camera_info`. With
+  `require_intrinsics:=true` (default) calibration is extrinsic-only and waits for this
 
 ---
 
@@ -648,6 +697,15 @@ One task at a time (`_operation_lock`, held for the whole task); anything but `s
 refused while a task runs. Stop cancels the in-flight action goal **natively** — a pick
 stops at the next safe phase boundary (never between grip and lift) instead of waiting
 for the layer's next can, which is why the motion interface is actions, not services.
+
+**Auto extrinsic calibration at startup.** When `auto_calibrate_on_startup` is set, a
+background thread waits for the robot + services (up to `startup_calibration_wait_sec`),
+then runs the same calibration loop on a small grid (`startup_calibration_grid_size` /
+`startup_calibration_z_levels_mm`) to re-fit the camera *pose* for drift (§10.1a). It is
+the `CALIBRATING` state at boot. Safety: it **skips without moving** if the grid is
+unconfigured, the robot/services never come up, or (via `begin`) the camera intrinsics
+haven't arrived; a failed fit keeps the previously saved transform. The full-grid
+`/task/calibrate` remains for a deliberate, denser re-fit.
 
 Bin-cycle state (layer index, `BIN_COMPLETE`, tier-1 rescan decisions — §5) belongs here
 when it gets wired in: it is sequencing state, not perception or motion state.

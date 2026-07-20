@@ -10,13 +10,28 @@ robot base coordinates:
 
     [X, Y, Z]^T = M @ [u*d, v*d, d, 1]^T        (mm everywhere)
 
-Fitting M by least squares over red-dot samples absorbs the camera
-intrinsics — we never need a CameraInfo. Lens distortion is the ignored
-residual; the per-axis RMS reported by fit() is the honest measure of it.
+M factors into the two physical parts:
 
-The features degenerate when every sample shares one depth (column d becomes
-a multiple of column 1) — fit() rejects that with a clear message, which is
-exactly the "must sample multiple heights" rule enforced in math.
+    M = [ R·B | t ]        B = [[1/fx, 0, -cx/fx],
+                                [0, 1/fy, -cy/fy],   (intrinsics — STATIC)
+                                [0,  0,     1   ]]
+                           R, t = camera pose vs robot base (extrinsics — MOVE)
+
+Two ways to obtain M:
+
+- fit() — the full monolithic least squares. Fits all 12 numbers at once,
+  absorbing the intrinsics; needs a wide depth span or Z is unconstrained
+  (the d column becomes a multiple of the 1 column). No CameraInfo required.
+- fit_extrinsic() — when the intrinsics are already known (camera SDK /
+  CameraInfo). Back-projects each sample to a camera-frame 3D point with the
+  fixed intrinsics, then solves the rigid transform {P_cam}→{P_robot} in
+  closed form (Kabsch/Umeyama). Only 6 unknowns, so a handful of poses
+  suffice and the depth-span rule relaxes (Z_cam = d is measured, not fit).
+  This is the "small calibration at startup" that corrects for camera drift
+  without re-measuring the intrinsics.
+
+Lens distortion is the ignored residual either way; the per-axis RMS reported
+by both fitters is the honest measure of it.
 """
 
 from __future__ import annotations
@@ -28,8 +43,9 @@ import numpy as np
 import yaml
 
 
-MIN_SAMPLES = 6          # 4 solves it; below 6 there is no meaningful residual
-MIN_DEPTH_SPAN_MM = 30.0  # samples flatter than this cannot constrain Z
+MIN_SAMPLES = 6              # 4 solves the full fit; below 6 no meaningful residual
+MIN_DEPTH_SPAN_MM = 30.0     # samples flatter than this cannot constrain Z (full fit)
+MIN_EXTRINSIC_SAMPLES = 4    # a rigid transform needs 3 non-collinear points; 4 for margin
 
 
 class CalibrationError(Exception):
@@ -40,7 +56,8 @@ class CameraRobotCalibration:
     """A fitted (or loaded) camera→robot transform."""
 
     def __init__(self, matrix: np.ndarray, rms_mm: tuple[float, float, float],
-                 sample_count: int, created: str = ""):
+                 sample_count: int, created: str = "", source: str = "full",
+                 intrinsics: dict | None = None):
         matrix = np.asarray(matrix, dtype=np.float64)
         if matrix.shape != (3, 4):
             raise CalibrationError(f"matrix must be 3x4, got {matrix.shape}")
@@ -48,6 +65,11 @@ class CameraRobotCalibration:
         self.rms_mm = tuple(float(v) for v in rms_mm)
         self.sample_count = int(sample_count)
         self.created = created
+        # "full" (monolithic fit) or "extrinsic" (Kabsch with known intrinsics).
+        self.source = source
+        # The intrinsics used/absorbed, if known: {fx, fy, cx, cy}. Persisted
+        # so the next startup can run an extrinsic-only fit without them again.
+        self.intrinsics = dict(intrinsics) if intrinsics else None
 
     # ------------------------------------------------------------------
     # Fitting
@@ -108,6 +130,83 @@ class CameraRobotCalibration:
             rms_mm=rms,
             sample_count=len(uvd),
             created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            source="full",
+        )
+
+    @staticmethod
+    def _backproject(uvd: np.ndarray, fx, fy, cx, cy) -> np.ndarray:
+        """(u, v, depth) rows → camera-frame 3D points (mm), given intrinsics."""
+        u, v, d = uvd[:, 0], uvd[:, 1], uvd[:, 2]
+        return np.column_stack([(u - cx) / fx * d, (v - cy) / fy * d, d])
+
+    @classmethod
+    def fit_extrinsic(cls, samples_uvd, samples_xyz, intrinsics) -> "CameraRobotCalibration":
+        """Rigid (Kabsch) fit with KNOWN intrinsics — the small startup fit.
+
+        Back-projects each sample to a camera-frame 3D point using the fixed
+        intrinsics, then solves the rigid transform {P_cam} → {P_robot} in
+        closed form. Reconstructs the same [R·B | t] matrix the runtime uses,
+        so transform()/inverse() are unchanged.
+
+        intrinsics: dict with fx, fy, cx, cy.
+        """
+        for key in ("fx", "fy", "cx", "cy"):
+            if key not in intrinsics:
+                raise CalibrationError(f"intrinsics missing '{key}'")
+        fx, fy = float(intrinsics["fx"]), float(intrinsics["fy"])
+        cx, cy = float(intrinsics["cx"]), float(intrinsics["cy"])
+        if fx == 0.0 or fy == 0.0:
+            raise CalibrationError("intrinsics fx/fy must be non-zero")
+
+        uvd = np.asarray(samples_uvd, dtype=np.float64).reshape(-1, 3)
+        xyz = np.asarray(samples_xyz, dtype=np.float64).reshape(-1, 3)
+        if len(uvd) != len(xyz):
+            raise CalibrationError(
+                f"sample count mismatch: {len(uvd)} camera vs {len(xyz)} robot"
+            )
+        if len(uvd) < MIN_EXTRINSIC_SAMPLES:
+            raise CalibrationError(
+                f"need at least {MIN_EXTRINSIC_SAMPLES} samples, got {len(uvd)}"
+            )
+
+        p_cam = cls._backproject(uvd, fx, fy, cx, cy)
+
+        # Points must not be collinear or the rotation axis is undetermined.
+        centered_cam = p_cam - p_cam.mean(axis=0)
+        if np.linalg.matrix_rank(centered_cam, tol=1e-6) < 2:
+            raise CalibrationError(
+                "degenerate sample geometry (marker points near-collinear) — "
+                "spread samples across x, y and z"
+            )
+
+        # Kabsch/Umeyama rigid alignment P_cam -> P_robot (rotation only).
+        cam_centroid = p_cam.mean(axis=0)
+        rob_centroid = xyz.mean(axis=0)
+        h = (p_cam - cam_centroid).T @ (xyz - rob_centroid)
+        u_svd, _, vt = np.linalg.svd(h)
+        # Reflection guard: force a proper rotation (det +1).
+        sign = np.sign(np.linalg.det(vt.T @ u_svd.T))
+        rotation = vt.T @ np.diag([1.0, 1.0, sign]) @ u_svd.T
+        translation = rob_centroid - rotation @ cam_centroid
+
+        # Rebuild M = [R·B | t] so the runtime path is identical to fit().
+        b = np.array([
+            [1.0 / fx, 0.0, -cx / fx],
+            [0.0, 1.0 / fy, -cy / fy],
+            [0.0, 0.0, 1.0],
+        ])
+        matrix = np.column_stack([rotation @ b, translation])
+
+        predicted = (rotation @ p_cam.T).T + translation
+        rms = tuple(np.sqrt(np.mean((predicted - xyz) ** 2, axis=0)))
+
+        return cls(
+            matrix=matrix,
+            rms_mm=rms,
+            sample_count=len(uvd),
+            created=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            source="extrinsic",
+            intrinsics={"fx": fx, "fy": fy, "cx": cx, "cy": cy},
         )
 
     # ------------------------------------------------------------------
@@ -137,19 +236,28 @@ class CameraRobotCalibration:
     # ------------------------------------------------------------------
 
     def save(self, path: str | Path) -> None:
-        payload = {
-            "camera_robot_calibration": {
-                "model": "xyz = M @ [u*d, v*d, d, 1]  (mm)",
-                "matrix": [[float(v) for v in row] for row in self.matrix],
-                "rms_mm": {
-                    "x": self.rms_mm[0],
-                    "y": self.rms_mm[1],
-                    "z": self.rms_mm[2],
-                },
-                "sample_count": self.sample_count,
-                "created": self.created,
-            }
+        calibration = {
+            "model": "xyz = M @ [u*d, v*d, d, 1]  (mm)",
+            "matrix": [[float(v) for v in row] for row in self.matrix],
+            "rms_mm": {
+                "x": self.rms_mm[0],
+                "y": self.rms_mm[1],
+                "z": self.rms_mm[2],
+            },
+            "sample_count": self.sample_count,
+            "source": self.source,
+            "created": self.created,
         }
+        payload = {"camera_robot_calibration": calibration}
+        # Static intrinsics block — kept beside the transform so the next
+        # startup's extrinsic fit can reuse them if the camera is silent.
+        if self.intrinsics:
+            payload["camera_intrinsics"] = {
+                "fx": float(self.intrinsics["fx"]),
+                "fy": float(self.intrinsics["fy"]),
+                "cx": float(self.intrinsics["cx"]),
+                "cy": float(self.intrinsics["cy"]),
+            }
         Path(path).write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
     @classmethod
@@ -157,6 +265,7 @@ class CameraRobotCalibration:
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         try:
             data = raw["camera_robot_calibration"]
+            intrinsics = raw.get("camera_intrinsics")
             return cls(
                 matrix=np.array(data["matrix"], dtype=np.float64),
                 rms_mm=(
@@ -166,6 +275,8 @@ class CameraRobotCalibration:
                 ),
                 sample_count=data["sample_count"],
                 created=data.get("created", ""),
+                source=data.get("source", "full"),
+                intrinsics=intrinsics,
             )
         except (KeyError, TypeError) as e:
             raise CalibrationError(f"unreadable calibration file {path}: {e}") from e
