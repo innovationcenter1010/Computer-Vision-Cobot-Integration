@@ -14,7 +14,9 @@ plus new feedback types the legacy UI never had:
 TEMPORARY manual centre select: while localization publishes
 /vision/manual_dot_request=true the UI prompts for a click on the color feed;
 the ("VISION", "click_center") command republishes it as a PointStamped on
-/vision/manual_dot_click. Remove with the localization-side flag.
+/vision/manual_dot_click, and ("VISION", "skip_center") publishes Empty on
+/vision/manual_dot_skip to drop a pose whose marker is out of frame. Remove
+with the localization-side flag.
 
 Threading model: rclpy spins in a background thread; uvicorn owns the main
 thread's asyncio loop. ROS callbacks hand payloads to the loop via
@@ -54,7 +56,7 @@ from rcl_interfaces.srv import SetParameters
 
 from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import Image
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Empty
 from std_srvs.srv import Trigger
 
 from cobot_interfaces.msg import CanTargetArray, LayerReport, TaskStatus
@@ -125,6 +127,15 @@ class WebNode(Node):
         self.ws_loop: asyncio.AbstractEventLoop | None = None
         self.ws_clients: list[WebSocket] = []
 
+        # Last value of latched/edge-triggered feedback, replayed to each newly
+        # connected browser. Broadcasts are fire-and-forget to whoever is
+        # connected AT THE TIME; a page that opens or refreshes later would
+        # otherwise miss a state set before it connected (e.g. a calibration
+        # already waiting for a marker click). Cached on the ROS thread, read
+        # on the asyncio thread — a plain assignment, safe without a lock.
+        self._last_status_payload: dict | None = None
+        self._manual_waiting = False
+
         self.create_subscription(Image, "/camera/color/image_raw", self._on_color, SENSOR_QOS)
         self.create_subscription(Image, "/camera/depth/image_raw", self._on_depth, SENSOR_QOS)
         self.create_subscription(CanTargetArray, "/vision/targets", self._on_targets, 10)
@@ -138,6 +149,9 @@ class WebNode(Node):
         )
         self._manual_click_pub = self.create_publisher(
             PointStamped, "/vision/manual_dot_click", 10
+        )
+        self._manual_skip_pub = self.create_publisher(
+            Empty, "/vision/manual_dot_skip", 10
         )
 
         self._trigger_clients = {
@@ -211,16 +225,16 @@ class WebNode(Node):
     def _on_status(self, msg: TaskStatus):
         # Websocket type stays "cobot_status" — app.js contract unchanged.
         # progress/active_task are additive; the UI can ignore them.
-        self.broadcast(
-            {
-                "type": "cobot_status",
-                "state": TASK_STATE_NAMES.get(msg.state, "unknown"),
-                "detail": msg.detail,
-                "active_task": msg.active_task,
-                "progress_current": msg.progress_current,
-                "progress_total": msg.progress_total,
-            }
-        )
+        payload = {
+            "type": "cobot_status",
+            "state": TASK_STATE_NAMES.get(msg.state, "unknown"),
+            "detail": msg.detail,
+            "active_task": msg.active_task,
+            "progress_current": msg.progress_current,
+            "progress_total": msg.progress_total,
+        }
+        self._last_status_payload = payload  # replayed to late-connecting browsers
+        self.broadcast(payload)
 
     def _on_report(self, msg: LayerReport):
         self.broadcast(
@@ -234,7 +248,8 @@ class WebNode(Node):
 
     def _on_manual_request(self, msg: Bool):
         # TEMPORARY manual centre select — the UI prompts while this is true.
-        self.broadcast({"type": "manual_dot_request", "waiting": bool(msg.data)})
+        self._manual_waiting = bool(msg.data)  # replayed to late-connecting browsers
+        self.broadcast({"type": "manual_dot_request", "waiting": self._manual_waiting})
 
     def broadcast(self, payload: dict):
         """Thread-safe: callable from ROS callbacks."""
@@ -266,6 +281,11 @@ class WebNode(Node):
         if receiver == "VISION" and command == "click_center":
             # TEMPORARY manual centre select — a topic, not a Trigger service.
             return self._publish_manual_click(payload)
+
+        if receiver == "VISION" and command == "skip_center":
+            # TEMPORARY manual centre select — drop this calibration pose.
+            self._manual_skip_pub.publish(Empty())
+            return {"result": "ok", "message": "pose skipped"}
 
         route = COMMAND_ROUTES.get((receiver, command))
         if route is None:
@@ -431,6 +451,16 @@ def create_app(node: WebNode) -> FastAPI:
         await websocket.accept()
         node.ws_clients.append(websocket)
         await websocket.send_json({"type": "connection", "message": "WebSocket connected"})
+
+        # Replay the current state so a page opened or refreshed mid-operation
+        # is immediately correct — otherwise it would sit blank until the next
+        # change. Most important for the manual-click prompt: a calibration
+        # already waiting must show it right away.
+        if node._last_status_payload is not None:
+            await websocket.send_json(node._last_status_payload)
+        await websocket.send_json(
+            {"type": "manual_dot_request", "waiting": node._manual_waiting}
+        )
 
         try:
             while True:

@@ -82,8 +82,10 @@ class CobotNode(Node):
 
         self.get_logger().info(f"Connecting to Motoman at {cobot_configs['cobot_ip']} ...")
         try:
+            # Connects, then clears any trajectory left queued by a previous
+            # session so the first motion_start() can't execute stale points.
             self._cobot = Cobot(cobot_configs)
-            self._publish_status(CobotStatus.STATE_IDLE, "connected")
+            self._publish_status(CobotStatus.STATE_IDLE, "connected, trajectory cleared")
         except Exception as e:  # noqa: BLE001 — node must come up even if robot is off
             self._cobot = None
             self.get_logger().error(f"Cobot connection failed: {e}")

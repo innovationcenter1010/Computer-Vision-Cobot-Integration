@@ -192,3 +192,26 @@ button {
     cursor: crosshair;
     outline: 3px solid #e0a800;
 }
+
+/* skip button inside the marker prompt (temporary, with the block above) */
+.marker-prompt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.marker-skip {
+    flex: none;
+    padding: 6px 12px;
+    border: 1px solid #6b4e00;
+    border-radius: 4px;
+    background: #6b4e00;
+    color: #fff4d6;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.marker-skip:hover {
+    background: #543d00;
+}

@@ -258,15 +258,29 @@ class Cobot:
 
 
 
+        self.connected = False
         for attempt in range(5):
             result = self.robot.connect()
-            if result.status.is_ok:
+            # is_ok is a bound METHOD on the pybind StatusInfo (see
+            # MotomanRobotBindings.cpp) — testing `result.status.is_ok`
+            # without calling it is always truthy, i.e. "connected" even with
+            # the robot powered off. Call it.
+            if result.status.is_ok():
                 print("Connected to robot!!")
+                self.connected = True
                 break
-            else:
-                print(f"Connection attempt {attempt + 1} failed. Retrying...")
-                time.sleep(0.1)
+            print(f"Connection attempt {attempt + 1} failed. Retrying...")
+            time.sleep(0.1)
 
+        if not self.connected:
+            # cobot_node catches this and reports STATE_DISCONNECTED, so goals
+            # are rejected up front instead of failing deep in a choreography.
+            raise RuntimeError(
+                f"could not connect to the robot at {cobot_configs['cobot_ip']} "
+                f"after 5 attempts: {result.status.message}"
+            )
+
+        self.clear_trajectory()
 
         self.gripper_io_group = 1
         self.gripper_io_bit = 2
@@ -491,6 +505,25 @@ class Cobot:
 
     
 
+
+    def clear_trajectory(self):
+        """Discard whatever is queued in the controller's trajectory buffer.
+
+        Called on startup: a killed or crashed session can leave points in the
+        buffer, and the next motion_start() would run those stale points —
+        moving the arm somewhere nobody asked for — before ours. Best-effort:
+        a failure here is logged, not fatal, since the buffer may simply
+        already be empty.
+        """
+        result = self.robot.clear_trajectory()
+        if result.status.is_ok():
+            print("Trajectory buffer cleared")
+        else:
+            print(
+                "WARNING: could not clear the trajectory buffer: "
+                f"[{result.status.status_code}] {result.status.message}"
+            )
+        return result
 
     def disconnect(self):
         self.robot.disconnect()

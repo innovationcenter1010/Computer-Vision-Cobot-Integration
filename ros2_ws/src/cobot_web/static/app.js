@@ -1,5 +1,5 @@
 // Query param busts the module cache when commands change (bump with app.js version).
-import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js?v=3";
+import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js?v=4";
 
 
 function setFieldValue(id, value) {
@@ -119,7 +119,7 @@ function setMarkerPrompt(waiting) {
     if (image) image.classList.toggle("awaiting-click", waiting);
 
     const banner = document.getElementById("marker_click_prompt");
-    if (banner) banner.style.display = waiting ? "block" : "none";
+    if (banner) banner.style.display = waiting ? "flex" : "none";
 }
 
 function handleColorFeedClick(event) {
@@ -145,6 +145,14 @@ function handleColorFeedClick(event) {
     // Optimistic: localization confirms by dropping the request flag.
     setMarkerPrompt(false);
 }
+
+function skipMarkerPose() {
+    if (!awaitingMarkerClick) return;
+    sendCommand(Receiver.VISION, VisionCommands.SKIP_CENTER);
+    setMarkerPrompt(false);
+}
+
+window.skipMarkerPose = skipMarkerPose;
 
 // -----------------------------------------------------------------
 

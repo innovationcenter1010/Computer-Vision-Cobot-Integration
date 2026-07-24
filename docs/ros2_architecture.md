@@ -639,7 +639,7 @@ re-measure them if you set one.
 | `/vision/calibration_begin` | `localization_node` | clears the sample buffer, warms the red-dot model |
 | `/vision/calibration_sample` | `localization_node` | "marker parked at TCP (x,y,z), measure now": N `locate_dot` reads → median (u,v), median-window depth from its own buffer, add marker offset, store the pair |
 | `/vision/calibration_compute` | `localization_node` | mode-select (extrinsic if intrinsics known, else full) → validate RMS → write `calibration.yaml` → hot-swap the live transform |
-| `/vision/locate_dot` | `yolo_node` | red-dot inference on the latest color frame (only ultralytics importer) |
+| `/vision/locate_dot` | `yolo_node` | red-dot inference on the latest color frame (only ultralytics importer) — **skipped entirely in manual mode**, see §10.5 |
 | `/camera/color/camera_info` | `camera_node` | relays the SDK intrinsics (from the streamer's JSON) that make the extrinsic fit possible |
 
 Sequence: web **Calibrate** → `/task/calibrate` → `begin` → {`MoveToPose` → settle →
@@ -671,6 +671,42 @@ Prerequisites before running a calibration (all parameters):
   `require_intrinsics:=true` (default) calibration is extrinsic-only and waits for this
 
 ---
+
+### 10.5 TEMPORARY: manual centre select
+
+`localization_node.manual_dot_selection: true` replaces the red-dot model with an
+operator click, for use while the model is still being trained. **Only the source of
+`(u, v)` changes** — depth sampling, `marker_offset_mm`, the fit, the RMS gate and
+persistence are the same code either way, so a manual calibration is as valid as an
+automatic one (as accurate as your clicking).
+
+```
+localization  --/vision/manual_dot_request (Bool, latched)-->  web_node --ws--> browser
+browser --ws("VISION","click_center",{u,v})--> web_node --/vision/manual_dot_click--> localization
+browser --ws("VISION","skip_center")-------->  web_node --/vision/manual_dot_skip (Empty)--> localization
+```
+
+- `calibration_begin` skips the `locate_dot` availability check and the model warm-up
+  (so it returns instantly instead of after the ~110 s lazy load).
+- `calibration_sample` publishes `manual_dot_request=true`, clears any stale click, and
+  blocks up to `manual_click_timeout_sec`. A stale click sent while the arm was still
+  moving can never be consumed as the next pose's sample.
+- On timeout the pose fails cleanly and is skipped, like any other bad sample.
+- **Skip:** if the marker is out of frame at a pose, the operator clicks *"Marker not
+  in frame — skip pose"* instead of the feed. That publishes `manual_dot_skip`, and
+  `calibration_sample` returns `success=False` immediately (no waiting out the timeout).
+  The task manager drops that pose and moves on; the fit is overdetermined, so a few
+  skips are harmless.
+- The browser clicks `#rgb_image` and scales by `naturalWidth/Height`, so the pixel sent
+  is a true COLOR-frame pixel regardless of CSS size.
+
+**`task_manager.calibration_sample_timeout_sec` must stay above
+`manual_click_timeout_sec`** (180 vs 120 by default) or the task manager gives up on the
+service call while you are still looking at the screen, and the whole run aborts.
+
+To remove: drop the flag, all three topics, `handle_web_command`'s `click_center` /
+`skip_center` branches, and the `TEMPORARY` blocks in `app.js` / `index.html` /
+`style.css`.
 
 ## 11. Task manager — state machine + sequencing (`cobot_tasks`)
 

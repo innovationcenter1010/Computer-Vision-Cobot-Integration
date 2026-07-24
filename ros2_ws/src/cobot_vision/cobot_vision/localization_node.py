@@ -41,10 +41,13 @@ math. Between poses the task manager calls:
                                  falls back to the full monolithic fit.
 
 TEMPORARY manual centre select (manual_dot_selection):
-  out: /vision/manual_dot_request (Bool, latched) — true while a click is wanted
+  out: /vision/manual_dot_request (Bool, latched) — true while input is wanted
   in:  /vision/manual_dot_click (PointStamped)    — point.x/y = COLOR image px
+       /vision/manual_dot_skip  (Empty)           — drop this pose (marker not
+                                                     in frame), no wait for the
+                                                     timeout
 Only the source of (u,v) changes; depth sampling, the marker offset and the
-fit are identical either way. Delete both topics once the dot model is trusted.
+fit are identical either way. Delete these topics once the dot model is trusted.
 
 Tier-1 depth services (no ML):
   /vision/verify_target    — is a can still at this target's position?
@@ -73,7 +76,7 @@ from rclpy.qos import (
 
 from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import CameraInfo, Image
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Empty
 from std_srvs.srv import Trigger
 
 from cobot_interfaces.msg import CanTarget, CanTargetArray, ObbDetectionArray
@@ -180,9 +183,12 @@ class LocalizationNode(Node):
         self.declare_parameter("manual_dot_selection", False)
         self.declare_parameter("manual_click_timeout_sec", 120.0)
 
-        self._click_lock = threading.Lock()
-        self._click_px: tuple[float, float] | None = None
-        self._click_event = threading.Event()
+        # One event, two outcomes: a click carries (u, v); a skip carries the
+        # SKIP sentinel (operator says the marker isn't in frame → drop this
+        # pose without a sample, don't wait out the timeout).
+        self._manual_lock = threading.Lock()
+        self._manual_result: tuple[float, float] | str | None = None
+        self._manual_event = threading.Event()
 
         # Latest camera intrinsics {fx, fy, cx, cy} or None until CameraInfo.
         self._intrinsics_lock = threading.Lock()
@@ -226,6 +232,9 @@ class LocalizationNode(Node):
         self._manual_request_pub.publish(Bool(data=False))
         self.create_subscription(
             PointStamped, "/vision/manual_dot_click", self._on_manual_click, 10
+        )
+        self.create_subscription(
+            Empty, "/vision/manual_dot_skip", self._on_manual_skip, 10
         )
 
         self.create_service(VerifyTarget, "/vision/verify_target", self._on_verify_target)
@@ -517,31 +526,41 @@ class LocalizationNode(Node):
             raise TimeoutError(f"/vision/locate_dot timed out after {timeout:.0f}s")
         return future.result()
 
+    # SKIP sentinel returned by _await_manual_click when the operator drops a pose.
+    _SKIP = "skip"
+
     def _on_manual_click(self, msg: PointStamped):
         """Operator clicked the marker centre on the web UI's color feed.
         point.x / point.y are COLOR image pixels."""
-        with self._click_lock:
-            self._click_px = (float(msg.point.x), float(msg.point.y))
-        self._click_event.set()
+        with self._manual_lock:
+            self._manual_result = (float(msg.point.x), float(msg.point.y))
+        self._manual_event.set()
 
-    def _await_manual_click(self, timeout: float) -> tuple[float, float] | None:
-        """Ask for a click and block until it lands. None on timeout.
+    def _on_manual_skip(self, msg: Empty):
+        """Operator says the marker is not in frame — drop this pose."""
+        with self._manual_lock:
+            self._manual_result = self._SKIP
+        self._manual_event.set()
 
-        Clears any stale click first, so a click sent while the arm was still
-        moving can never be consumed as this pose's sample.
+    def _await_manual_click(self, timeout: float):
+        """Ask for a click and block until the operator clicks or skips.
+
+        Returns (u, v) on a click, self._SKIP if the pose was skipped, or None
+        on timeout. Clears any stale click/skip first, so an input sent while
+        the arm was still moving can never be consumed as this pose's answer.
         """
-        with self._click_lock:
-            self._click_px = None
-        self._click_event.clear()
+        with self._manual_lock:
+            self._manual_result = None
+        self._manual_event.clear()
         self._manual_request_pub.publish(Bool(data=True))
         self.get_logger().info(
-            "[calibration] waiting for a marker click on the web UI color feed"
+            "[calibration] waiting for a marker click (or skip) on the web UI"
         )
         try:
-            if not self._click_event.wait(timeout=timeout):
+            if not self._manual_event.wait(timeout=timeout):
                 return None
-            with self._click_lock:
-                return self._click_px
+            with self._manual_lock:
+                return self._manual_result
         finally:
             self._manual_request_pub.publish(Bool(data=False))
 
@@ -607,6 +626,14 @@ class LocalizationNode(Node):
                 response.success = False
                 response.message = f"no marker click within {timeout:.0f}s"
                 return response
+            if click == self._SKIP:
+                # Operator dropped this pose (marker out of frame). Same
+                # success=False path the task manager already skips on, but
+                # deliberate — say so instead of implying a failure.
+                response.success = False
+                response.message = "pose skipped by operator (marker not in frame)"
+                self.get_logger().info(f"[calibration] {response.message}")
+                return response
             u, v = click
         else:
             reads = int(self.get_parameter("dot_samples_per_pose").value)
@@ -652,6 +679,15 @@ class LocalizationNode(Node):
         )
         return response
 
+    def _reject_fit(self, response, message: str):
+        """Refuse a fit and say so in the LOG, not just the service response.
+        A rejected calibration is the single most important thing to be able
+        to find afterwards; /task/status detail scrolls away."""
+        response.success = False
+        response.message = f"{message} — transform unchanged"
+        self.get_logger().error(f"[calibration] REJECTED: {response.message}")
+        return response
+
     def _on_cal_compute(self, request, response):
         min_samples = int(self.get_parameter("calibration_min_samples").value)
         max_rms = float(self.get_parameter("calibration_max_rms_mm").value)
@@ -662,44 +698,52 @@ class LocalizationNode(Node):
             intrinsics = dict(self._intrinsics) if self._intrinsics else None
 
         if len(self._samples_uvd) < min_samples:
-            response.success = False
-            response.message = (
-                f"only {len(self._samples_uvd)} usable samples "
-                f"(need {min_samples}) — transform unchanged"
+            return self._reject_fit(
+                response,
+                f"only {len(self._samples_uvd)} usable samples (need {min_samples})",
             )
-            return response
 
-        # Known intrinsics → small extrinsic-only (Kabsch) fit. Otherwise fall
-        # back to the full monolithic fit, unless intrinsics are required.
+        # Fit-mode selection is driven by require_intrinsics, NOT merely by
+        # whether a CameraInfo happens to be present:
+        #   False -> we do NOT trust the camera's intrinsics; run the full
+        #            monolithic fit that solves intrinsics + extrinsics together
+        #            (needs the wide depth-span grid). Use this when the SDK's
+        #            reported fx/fy are wrong/inconsistent.
+        #   True  -> trust the camera's intrinsics; run the small extrinsic-only
+        #            (Kabsch) fit, and refuse if no intrinsics have arrived.
         try:
-            if intrinsics is not None:
+            if not require_intrinsics:
+                fitted = CameraRobotCalibration.fit(self._samples_uvd, self._samples_xyz)
+            elif intrinsics is not None:
                 fitted = CameraRobotCalibration.fit_extrinsic(
                     self._samples_uvd, self._samples_xyz, intrinsics
                 )
-            elif require_intrinsics:
-                response.success = False
-                response.message = (
-                    "no camera intrinsics — extrinsic fit impossible "
-                    "(set require_intrinsics:=false to allow a full fit) — "
-                    "transform unchanged"
-                )
-                return response
             else:
-                fitted = CameraRobotCalibration.fit(self._samples_uvd, self._samples_xyz)
+                return self._reject_fit(
+                    response,
+                    "no camera intrinsics — extrinsic fit impossible "
+                    "(set require_intrinsics:=false to allow a full fit)",
+                )
         except CalibrationError as e:
-            response.success = False
-            response.message = f"{e} — transform unchanged"
-            return response
+            return self._reject_fit(response, str(e))
 
         rms = fitted.rms_mm
         rms_text = f"rms x={rms[0]:.1f} y={rms[1]:.1f} z={rms[2]:.1f} mm"
         if max(rms) > max_rms:
-            response.success = False
-            response.message = (
-                f"{rms_text} exceeds calibration_max_rms_mm={max_rms:.1f} "
-                "— transform unchanged"
+            # Log the samples too — without them a rejection is undebuggable
+            # once the buffer is cleared by the next run.
+            self.get_logger().error(
+                f"[calibration] {fitted.source} fit over "
+                f"{fitted.sample_count} samples:\n"
+                + "\n".join(
+                    f"    px({u:6.1f},{v:6.1f}) d={d:6.1f}  ->  "
+                    f"target ({x:8.1f},{y:9.1f},{z:8.1f})"
+                    for (u, v, d), (x, y, z) in zip(self._samples_uvd, self._samples_xyz)
+                )
             )
-            return response
+            return self._reject_fit(
+                response, f"{rms_text} exceeds calibration_max_rms_mm={max_rms:.1f}"
+            )
 
         fitted.save(cal_file)
         self._calibration = fitted
