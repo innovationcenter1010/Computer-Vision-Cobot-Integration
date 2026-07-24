@@ -308,13 +308,12 @@ localization_node:
     pathing_row_axis: "y"               # rows along robot Y, serpentine along X
     pathing_row_tolerance_mm: 50.0
     can_height_mm: 87.0
-    marker_offset_mm: [0.0, 0.0, 0.0]   # measured after mounting the dot (§10)
+    marker_offset_mm: [0.0, 0.0, 0.0]   # red dot off the toolhead point (§10)
 
 cobot_node:
   ros__parameters:
     robot_ip: "192.168.1.31"
-    tool_head_length_mm: 620.0
-    tool_head_xy_offset: 0.0
+    tool_offset_mm: [0.0, 0.0, 0.0]     # tool TIP off the toolhead point (§10)
     tool_head_compression_distance_mm: 50.0
     trajectories_file: "config/trajectories.json"
 
@@ -602,14 +601,34 @@ can't report intrinsics.
 > from the wrong physical ray. Enable alignment in the streamer and publish the color
 > intrinsics.
 
-### 10.2 The marker offset
+### 10.2 The two offsets from the toolhead point
 
-The dot is not at the TCP. Each sample's ground truth is `commanded_TCP +
-marker_offset_mm`, applied by **localization** before fitting (never absorbed into the
-fit — the transform must localize cans, not tool flanges). To keep frames unambiguous
-every calibration pose uses one fixed orientation (`calibration_orientation_deg`,
-default 180/0/0 = the pick orientation), and the offset is measured **along robot base
-axes at that orientation**, to the dot surface the camera sees.
+The robot controller commands one pose — the **official toolhead point**. Two things
+hang off it and neither sits on it, so each gets its own 3-vector, measured separately
+in mm along **robot base axes** at the fixed pick/calibration orientation
+(`calibration_orientation_deg`, default 180/0/0):
+
+| offset | param | owner | applied to |
+|---|---|---|---|
+| red calibration dot | `localization_node.marker_offset_mm` | localization | each calibration sample's ground truth: `commanded_TCP + marker_offset_mm` |
+| end of the tooling | `cobot_node.tool_offset_mm` | `cobot.py` (`ToolOffset`) | vision-derived pick poses: commanded pose = can position − tool offset |
+
+The marker offset is applied by localization **before** fitting and is never absorbed
+into the fit — the transform must localize cans, not tool flanges. Because it is
+accounted for during the fit, `/vision/targets` coordinates are true robot-base
+positions of the **can**; `cobot_node` then subtracts its own tool offset so the tool
+*tip* is what lands there. The XY part rotates with the commanded `rz` (the offset is
+measured at `rz = 0`); Z does not, since `rx`/`ry` are fixed.
+
+Scope: the tool offset touches vision-derived pick poses only. Teach points
+(`trajectories.json`) and `/cobot/move_to_pose` stay raw commanded-toolhead poses — the
+calibration grid in particular *must* command the toolhead, because the vision side adds
+`marker_offset_mm` to that same commanded pose.
+
+`tool_offset_mm: [0,0,0]` means "tip is the toolhead point" and reproduces the behavior
+from before the offset existed. A non-zero Z also redefines the pick and approach
+heights (`PICK_TIP_Z_MM` / `APPROACH_TIP_Z_MM` in `cobot.py`) as **tip** heights —
+re-measure them if you set one.
 
 ### 10.3 Ownership split — movements vs math
 
@@ -645,6 +664,7 @@ Prerequisites before running a calibration (all parameters):
 - `task_manager.calibration_{x,y}_range_mm`, `calibration_z_levels_mm` — safe, reachable,
   in-frame bounds; `[0,0]` means unconfigured and `/task/calibrate` refuses
 - `localization_node.marker_offset_mm` — measured with a ruler after mounting the dot
+  (and `cobot_node.tool_offset_mm` for the tooling — same reference point, §10.2)
 - `yolo_node.dot_model_path` — `red_dot_best.pt` in the models mount
 - Camera intrinsics available: the streamer writes `intrinsics_file` (color intrinsics,
   depth→color alignment ON), relayed as `/camera/color/camera_info`. With

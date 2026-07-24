@@ -29,13 +29,22 @@ math. Between poses the task manager calls:
   /vision/calibration_sample   — "marker parked at TCP (x,y,z), measure now":
                                  locate the dot (yolo_node /vision/locate_dot),
                                  sample own depth buffer, add marker offset,
-                                 store the matched pair
+                                 store the matched pair. With
+                                 manual_dot_selection:=true the dot model is
+                                 bypassed and (u,v) comes from an operator
+                                 click on the web UI instead — see below.
   /vision/calibration_compute  — fit the 3x4 transform, validate RMS, persist
                                  to calibration_file, hot-swap the live model.
                                  With camera intrinsics known (CameraInfo) this
                                  is the small extrinsic-only (Kabsch) fit; with
                                  require_intrinsics:=false and no intrinsics it
                                  falls back to the full monolithic fit.
+
+TEMPORARY manual centre select (manual_dot_selection):
+  out: /vision/manual_dot_request (Bool, latched) — true while a click is wanted
+  in:  /vision/manual_dot_click (PointStamped)    — point.x/y = COLOR image px
+Only the source of (u,v) changes; depth sampling, the marker offset and the
+fit are identical either way. Delete both topics once the dot model is trusted.
 
 Tier-1 depth services (no ML):
   /vision/verify_target    — is a can still at this target's position?
@@ -62,7 +71,9 @@ from rclpy.qos import (
     DurabilityPolicy,
 )
 
+from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import CameraInfo, Image
+from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 
 from cobot_interfaces.msg import CanTarget, CanTargetArray, ObbDetectionArray
@@ -159,6 +170,20 @@ class LocalizationNode(Node):
         # (needs the wide depth-span grid).
         self.declare_parameter("require_intrinsics", True)
 
+        # ---- TEMPORARY: manual centre select ----
+        # True: calibration_sample does NOT run the red-dot model. It publishes
+        # /vision/manual_dot_request and blocks until the operator clicks the
+        # marker centre on the web UI's color feed (/vision/manual_dot_click).
+        # Everything downstream (depth sampling, marker offset, the fit) is
+        # unchanged — only where (u, v) comes from differs. Remove once the
+        # red-dot model is trusted.
+        self.declare_parameter("manual_dot_selection", False)
+        self.declare_parameter("manual_click_timeout_sec", 120.0)
+
+        self._click_lock = threading.Lock()
+        self._click_px: tuple[float, float] | None = None
+        self._click_event = threading.Event()
+
         # Latest camera intrinsics {fx, fy, cx, cy} or None until CameraInfo.
         self._intrinsics_lock = threading.Lock()
         self._intrinsics: dict | None = None
@@ -192,6 +217,16 @@ class LocalizationNode(Node):
         )
 
         self._targets_pub = self.create_publisher(CanTargetArray, "/vision/targets", 10)
+
+        # Manual centre select (temporary): latched request so a browser that
+        # connects mid-pose still sees that a click is wanted.
+        self._manual_request_pub = self.create_publisher(
+            Bool, "/vision/manual_dot_request", LATCHED_QOS
+        )
+        self._manual_request_pub.publish(Bool(data=False))
+        self.create_subscription(
+            PointStamped, "/vision/manual_dot_click", self._on_manual_click, 10
+        )
 
         self.create_service(VerifyTarget, "/vision/verify_target", self._on_verify_target)
         self.create_service(
@@ -482,6 +517,34 @@ class LocalizationNode(Node):
             raise TimeoutError(f"/vision/locate_dot timed out after {timeout:.0f}s")
         return future.result()
 
+    def _on_manual_click(self, msg: PointStamped):
+        """Operator clicked the marker centre on the web UI's color feed.
+        point.x / point.y are COLOR image pixels."""
+        with self._click_lock:
+            self._click_px = (float(msg.point.x), float(msg.point.y))
+        self._click_event.set()
+
+    def _await_manual_click(self, timeout: float) -> tuple[float, float] | None:
+        """Ask for a click and block until it lands. None on timeout.
+
+        Clears any stale click first, so a click sent while the arm was still
+        moving can never be consumed as this pose's sample.
+        """
+        with self._click_lock:
+            self._click_px = None
+        self._click_event.clear()
+        self._manual_request_pub.publish(Bool(data=True))
+        self.get_logger().info(
+            "[calibration] waiting for a marker click on the web UI color feed"
+        )
+        try:
+            if not self._click_event.wait(timeout=timeout):
+                return None
+            with self._click_lock:
+                return self._click_px
+        finally:
+            self._manual_request_pub.publish(Bool(data=False))
+
     def _on_cal_begin(self, request, response):
         if not self.get_parameter("calibration_file").value:
             response.success = False
@@ -506,50 +569,66 @@ class LocalizationNode(Node):
             response.message = "no depth frames received yet"
             return response
 
-        if not self._dot_client.wait_for_service(timeout_sec=5.0):
-            response.success = False
-            response.message = "/vision/locate_dot not available"
-            return response
+        # Manual mode never touches the red-dot model — skip the client check
+        # and the (slow) lazy-load warm-up entirely.
+        manual = self.get_parameter("manual_dot_selection").value
+        if not manual:
+            if not self._dot_client.wait_for_service(timeout_sec=5.0):
+                response.success = False
+                response.message = "/vision/locate_dot not available"
+                return response
 
-        # Warm-up: the first call makes yolo_node lazy-load the red-dot model,
-        # so per-pose sampling is fast once the robot starts moving.
-        try:
-            self._call_dot(DOT_WARMUP_TIMEOUT_SEC)
-        except TimeoutError as e:
-            response.success = False
-            response.message = f"red-dot model warm-up failed: {e}"
-            return response
+            # Warm-up: the first call makes yolo_node lazy-load the red-dot
+            # model, so per-pose sampling is fast once the robot starts moving.
+            try:
+                self._call_dot(DOT_WARMUP_TIMEOUT_SEC)
+            except TimeoutError as e:
+                response.success = False
+                response.message = f"red-dot model warm-up failed: {e}"
+                return response
 
         self._samples_uvd.clear()
         self._samples_xyz.clear()
-        self.get_logger().info("[calibration] buffer cleared, dot model warm")
+        self._manual_request_pub.publish(Bool(data=False))
+        mode = "MANUAL clicks" if manual else "dot model warm"
+        self.get_logger().info(f"[calibration] buffer cleared, {mode}")
         response.success = True
-        response.message = "ready"
+        response.message = f"ready ({mode})"
         return response
 
     def _on_cal_sample(self, request, response):
         response.sample_count = len(self._samples_uvd)
 
-        reads = int(self.get_parameter("dot_samples_per_pose").value)
-        hits = []
-        try:
-            for _ in range(reads):
-                dot = self._call_dot(DOT_TIMEOUT_SEC)
-                if dot.found:
-                    hits.append((dot.u, dot.v))
-                time.sleep(0.1)
-        except TimeoutError as e:
-            response.success = False
-            response.message = str(e)
-            return response
+        if self.get_parameter("manual_dot_selection").value:
+            # TEMPORARY manual mode: one operator click replaces N inferences.
+            timeout = float(self.get_parameter("manual_click_timeout_sec").value)
+            click = self._await_manual_click(timeout)
+            if click is None:
+                response.success = False
+                response.message = f"no marker click within {timeout:.0f}s"
+                return response
+            u, v = click
+        else:
+            reads = int(self.get_parameter("dot_samples_per_pose").value)
+            hits = []
+            try:
+                for _ in range(reads):
+                    dot = self._call_dot(DOT_TIMEOUT_SEC)
+                    if dot.found:
+                        hits.append((dot.u, dot.v))
+                    time.sleep(0.1)
+            except TimeoutError as e:
+                response.success = False
+                response.message = str(e)
+                return response
 
-        if len(hits) < (reads // 2) + 1:
-            response.success = False
-            response.message = f"dot seen {len(hits)}/{reads} times"
-            return response
+            if len(hits) < (reads // 2) + 1:
+                response.success = False
+                response.message = f"dot seen {len(hits)}/{reads} times"
+                return response
 
-        u = float(np.median([h[0] for h in hits]))
-        v = float(np.median([h[1] for h in hits]))
+            u = float(np.median([h[0] for h in hits]))
+            v = float(np.median([h[1] for h in hits]))
 
         depth = self._depth_frame_near(None)
         d = self._sample_depth_mm(depth, u, v) if depth is not None else None

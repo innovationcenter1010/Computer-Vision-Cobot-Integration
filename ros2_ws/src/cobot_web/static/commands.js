@@ -3,6 +3,8 @@
 
 export const VisionCommands = Object.freeze({
     DETECT: "detect",
+    // TEMPORARY manual centre select — payload {u, v} in COLOR image pixels.
+    CLICK_CENTER: "click_center",
 });
 
 export const CobotCommands = Object.freeze({

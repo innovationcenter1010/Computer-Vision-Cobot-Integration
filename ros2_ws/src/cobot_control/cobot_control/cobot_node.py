@@ -48,8 +48,11 @@ class CobotNode(Node):
         super().__init__("cobot_node")
 
         self.declare_parameter("robot_ip", "192.168.1.31")
-        self.declare_parameter("tool_head_length_mm", 620.0)
-        self.declare_parameter("tool_head_xy_offset", 0.0)
+        # Tool TIP relative to the official toolhead point, [x, y, z] mm along
+        # robot base axes at rz=0. Counterpart of localization_node's
+        # marker_offset_mm (the red dot off that same point). Zeros = the tip
+        # is the toolhead point, i.e. previous behavior.
+        self.declare_parameter("tool_offset_mm", [0.0, 0.0, 0.0])
         self.declare_parameter("tool_head_compression_distance_mm", 50.0)
         self.declare_parameter("trajectories_file", "")
 
@@ -64,8 +67,7 @@ class CobotNode(Node):
         # Same shape the legacy Cobot consumed from config.JSON.
         cobot_configs = {
             "cobot_ip": self.get_parameter("robot_ip").value,
-            "tool_head_length_mm": self.get_parameter("tool_head_length_mm").value,
-            "tool_head_xy_offset": self.get_parameter("tool_head_xy_offset").value,
+            "tool_offset_mm": list(self.get_parameter("tool_offset_mm").value),
             "tool_head_compression_distance_mm": self.get_parameter(
                 "tool_head_compression_distance_mm"
             ).value,

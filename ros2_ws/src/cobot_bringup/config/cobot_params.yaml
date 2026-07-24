@@ -50,10 +50,13 @@ localization_node:
     # get_layer_height returns layer_index=-1 until measured on hardware.
     depth_at_top_layer_mm: 0.0
     # --- camera→robot calibration (math side) ---
-    # Red dot relative to the commanded TCP, measured along ROBOT BASE axes
-    # with the arm at the calibration orientation. Measure to the dot surface
-    # the camera sees. MEASURE AND SET BEFORE CALIBRATING.
-    marker_offset_mm: [0.0, 0.0, 0.0]
+    # Red dot relative to the OFFICIAL toolhead point (the commanded TCP),
+    # [x, y, z] mm along ROBOT BASE axes with the arm at the calibration
+    # orientation. Measure to the dot surface the camera sees. This is the
+    # dot's half of the pair — the tooling's half is cobot_node.tool_offset_mm;
+    # both hang off the same point, so measure them separately.
+    # MEASURE AND SET BEFORE CALIBRATING.
+    marker_offset_mm: [0.0, 0.0, 300.0]
     dot_samples_per_pose: 3
     calibration_min_samples: 6
     # Fit worse than this on any axis → calibration rejected, old transform kept.
@@ -63,13 +66,35 @@ localization_node:
     # intrinsics arrive. False: allow the full monolithic fit (needs the wide
     # depth-span grid) when no intrinsics are available.
     require_intrinsics: true
+    # TEMPORARY manual centre select: true = calibration_sample skips the
+    # red-dot model and waits for you to click the marker centre on the web
+    # UI's color feed. Everything downstream is identical. Keep
+    # task_manager.calibration_sample_timeout_sec above the timeout here.
+    manual_dot_selection: true
+    manual_click_timeout_sec: 120.0
     # calibration_file is injected by robot.launch.py (bind-mounted config dir).
 
 cobot_node:
   ros__parameters:
     robot_ip: "192.168.1.31"
-    tool_head_length_mm: 620.0
-    tool_head_xy_offset: 0.0
+    # --- offsets from the OFFICIAL toolhead point (the pose the controller
+    # commands) --- two things hang off it and neither sits on it:
+    #   * the end of the tooling  -> tool_offset_mm (here)
+    #   * the red calibration dot -> localization_node.marker_offset_mm
+    # Same origin, different features: MEASURE THEM SEPARATELY, both as
+    # [x, y, z] mm along ROBOT BASE axes with the arm at rz=0 and the pick
+    # orientation (rx=180, ry=0). XY rotates with the commanded rz; Z does not.
+    #
+    # Applied to vision-derived pick poses only. Teach points
+    # (trajectories.json) and the calibration grid are already commanded-
+    # toolhead poses and stay raw.
+    #
+    # NOTE: zeros = tip is the toolhead point = the behavior before this
+    # param existed. Setting a non-zero Z also changes what the pick and
+    # approach heights mean (they become TIP heights, PICK_TIP_Z_MM /
+    # APPROACH_TIP_Z_MM in cobot.py) — re-measure them if you set one.
+    tool_offset_mm: [0.0, 0.0, 600.0]
+    # How far to press into the can. Declared but not yet applied.
     tool_head_compression_distance_mm: 50.0
     # trajectories_file is injected by robot.launch.py (share path);
     # set it here only to override.
@@ -82,13 +107,19 @@ task_manager:
     # SET SAFE, REACHABLE BOUNDS: every pose must keep the marker inside the
     # camera frame and the arm clear of the bin. [0,0] = not configured;
     # /task/calibrate refuses to run until these are set.
-    calibration_x_range_mm: [0.0, 0.0]
-    calibration_y_range_mm: [0.0, 0.0]
+    calibration_x_range_mm: [-350.0,50.0]
+    calibration_y_range_mm: [-1300.0,-900.0]
     # At least two heights >=30mm apart or the fit is rejected (Z unconstrained).
-    calibration_z_levels_mm: [-400,-200,0,200,400]
+    # Must be floats (trailing .0) — a bare int here is an INTEGER_ARRAY and
+    # the node refuses to start.
+    calibration_z_levels_mm: [500.0, 550.0, 600.0] #add .0 MUST BE FLOATS
     calibration_grid_size: [3, 2]        # nx, ny poses per z level
     calibration_orientation_deg: [180.0, 0.0, 0.0]   # rx, ry, rz for every pose
     calibration_settle_sec: 0.5
+    # Budget for one calibration_sample. Automatic (red-dot) mode needs only
+    # seconds; manual centre select waits on a human, so this must stay above
+    # localization_node.manual_click_timeout_sec.
+    calibration_sample_timeout_sec: 180.0
     # --- auto extrinsic re-calibration at startup ---
     # With intrinsics known (camera SDK), a small grid corrects for camera
     # drift each boot. THE ARM MOVES AT LAUNCH — needs the x/y ranges above

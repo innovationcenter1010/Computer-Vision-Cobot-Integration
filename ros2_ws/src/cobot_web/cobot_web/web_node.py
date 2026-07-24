@@ -9,6 +9,12 @@ Outgoing websocket messages (app.js contract preserved):
     {"type": "command_result", "command": ..., "result": ...}
 plus new feedback types the legacy UI never had:
     {"type": "targets", ...} {"type": "cobot_status", ...} {"type": "layer_report", ...}
+    {"type": "manual_dot_request", "waiting": bool}   (temporary, see below)
+
+TEMPORARY manual centre select: while localization publishes
+/vision/manual_dot_request=true the UI prompts for a click on the color feed;
+the ("VISION", "click_center") command republishes it as a PointStamped on
+/vision/manual_dot_click. Remove with the localization-side flag.
 
 Threading model: rclpy spins in a background thread; uvicorn owns the main
 thread's asyncio loop. ROS callbacks hand payloads to the loop via
@@ -46,7 +52,9 @@ from ament_index_python.packages import get_package_share_directory
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
 
+from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import Image
+from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 
 from cobot_interfaces.msg import CanTargetArray, LayerReport, TaskStatus
@@ -122,6 +130,15 @@ class WebNode(Node):
         self.create_subscription(CanTargetArray, "/vision/targets", self._on_targets, 10)
         self.create_subscription(TaskStatus, "/task/status", self._on_status, LATCHED_QOS)
         self.create_subscription(LayerReport, "/task/layer_report", self._on_report, 10)
+
+        # TEMPORARY manual centre select: localization asks for a click, the
+        # browser answers with a COLOR-image pixel.
+        self.create_subscription(
+            Bool, "/vision/manual_dot_request", self._on_manual_request, LATCHED_QOS
+        )
+        self._manual_click_pub = self.create_publisher(
+            PointStamped, "/vision/manual_dot_click", 10
+        )
 
         self._trigger_clients = {
             route: self.create_client(Trigger, route)
@@ -215,6 +232,10 @@ class WebNode(Node):
             }
         )
 
+    def _on_manual_request(self, msg: Bool):
+        # TEMPORARY manual centre select — the UI prompts while this is true.
+        self.broadcast({"type": "manual_dot_request", "waiting": bool(msg.data)})
+
     def broadcast(self, payload: dict):
         """Thread-safe: callable from ROS callbacks."""
         if self.ws_loop is None:
@@ -242,6 +263,10 @@ class WebNode(Node):
             await self._broadcast_async(self._camera_frame_payload())
             return {"result": "ok", "message": "frame pushed"}
 
+        if receiver == "VISION" and command == "click_center":
+            # TEMPORARY manual centre select — a topic, not a Trigger service.
+            return self._publish_manual_click(payload)
+
         route = COMMAND_ROUTES.get((receiver, command))
         if route is None:
             raise ValueError(f"Invalid command '{command}' for receiver '{receiver}'")
@@ -252,6 +277,24 @@ class WebNode(Node):
 
         result = await self._call_trigger(client)
         return {"result": result.success, "message": result.message}
+
+    def _publish_manual_click(self, payload) -> dict:
+        """TEMPORARY manual centre select: payload {"u": px, "v": px} in COLOR
+        image pixels (the browser scales its click back to natural size)."""
+        if not isinstance(payload, dict) or "u" not in payload or "v" not in payload:
+            raise ValueError('click_center needs a payload of {"u": px, "v": px}')
+        try:
+            u, v = float(payload["u"]), float(payload["v"])
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"click_center u/v must be numbers: {e}") from e
+
+        msg = PointStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "camera_color"
+        msg.point.x = u
+        msg.point.y = v
+        self._manual_click_pub.publish(msg)
+        return {"result": "ok", "message": f"marker click at ({u:.0f}, {v:.0f})"}
 
     async def _call_trigger(self, client, timeout: float = 10.0):
         """Bridge an rclpy future (resolved on the executor thread) to asyncio."""

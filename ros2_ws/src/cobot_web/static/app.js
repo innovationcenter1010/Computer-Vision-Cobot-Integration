@@ -1,5 +1,5 @@
 // Query param busts the module cache when commands change (bump with app.js version).
-import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js?v=2";
+import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js?v=3";
 
 
 function setFieldValue(id, value) {
@@ -105,6 +105,47 @@ setInterval(function () {
     }
 }, 1000);
 
+// ------- TEMPORARY: manual calibration-marker centre select -------
+// While localization is waiting, clicking the color feed sends the clicked
+// COLOR-IMAGE pixel back as the marker centre, replacing the red-dot model.
+// Delete this block (and the markup/CSS it touches) when the model is trusted.
+
+let awaitingMarkerClick = false;
+
+function setMarkerPrompt(waiting) {
+    awaitingMarkerClick = waiting;
+
+    const image = document.getElementById("rgb_image");
+    if (image) image.classList.toggle("awaiting-click", waiting);
+
+    const banner = document.getElementById("marker_click_prompt");
+    if (banner) banner.style.display = waiting ? "block" : "none";
+}
+
+function handleColorFeedClick(event) {
+    if (!awaitingMarkerClick) return;
+
+    const image = event.currentTarget;
+
+    // naturalWidth/Height are the true frame size (640x480); the element is
+    // CSS-scaled, so map the click back before sending pixels.
+    if (!image.naturalWidth || !image.naturalHeight) return;
+
+    const bounds = image.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+
+    const u = (event.clientX - bounds.left) / bounds.width * image.naturalWidth;
+    const v = (event.clientY - bounds.top) / bounds.height * image.naturalHeight;
+
+    sendCommand(Receiver.VISION, VisionCommands.CLICK_CENTER, {
+        u: Math.round(u),
+        v: Math.round(v)
+    });
+
+    // Optimistic: localization confirms by dropping the request flag.
+    setMarkerPrompt(false);
+}
+
 // -----------------------------------------------------------------
 
 function connectWebSocket() {
@@ -149,6 +190,12 @@ function connectWebSocket() {
 
         if (data.type === "targets") {
             setText("robot_command_status", "vision: " + data.count + " targets found");
+            return;
+        }
+
+        // TEMPORARY manual centre select
+        if (data.type === "manual_dot_request") {
+            setMarkerPrompt(data.waiting);
             return;
         }
     };
@@ -320,6 +367,10 @@ function sendSpeedCommand() {
 
 connectWebSocket();
 loadConfig();
+
+// TEMPORARY manual centre select — wire the color feed once at load.
+const colorFeed = document.getElementById("rgb_image");
+if (colorFeed) colorFeed.addEventListener("click", handleColorFeedClick);
 
 
 

@@ -34,11 +34,22 @@ from ultralytics import YOLO
 
 # Dataset yaml candidates, in priority order — makes the script run unchanged
 # on the host (repo-relative) or in the container (/ws, legacy /app).
-_REPO_ROOT = Path(__file__).resolve().parents[4]  # .../ (repo root)
+_REL = "vision_workspace/datasets/green_light/data.yaml"
+
+
+def _repo_candidate():
+    """Repo-relative data.yaml, or None when run from a shallow path (e.g.
+    live-mounted at /ws/train_green_light.py in the container)."""
+    parents = Path(__file__).resolve().parents
+    return parents[4] / _REL if len(parents) > 4 else None
+
+
 DATA_CANDIDATES = [
-    _REPO_ROOT / "vision_workspace/datasets/green_light/data.yaml",
-    Path("/ws/vision_workspace/datasets/green_light/data.yaml"),
-    Path("/app/vision_workspace/datasets/green_light/data.yaml"),
+    c for c in (
+        _repo_candidate(),
+        Path("/ws/" + _REL),
+        Path("/app/" + _REL),
+    ) if c is not None
 ]
 
 RUN_NAME = "green_light"

@@ -47,6 +47,36 @@ class Sensor_Assert:
     passed: bool
 
 @dataclass
+class ToolOffset:
+    """Tool tip relative to the OFFICIAL toolhead point — the pose the
+    controller actually commands.
+
+    Two things hang off that same reference point and neither sits on it:
+    the end of the tooling (this, applied here) and the red calibration dot
+    (localization_node.marker_offset_mm, applied on the vision side before
+    fitting). Same origin, different features — measure the two separately.
+
+    Measured along ROBOT BASE axes with the tool at rz = 0 and the pick
+    orientation (rx=180, ry=0). The XY part rotates with the commanded rz;
+    Z does not, since rx/ry are fixed.
+    """
+
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+    def is_empty(self) -> bool:
+        return self.x == 0.0 and self.y == 0.0 and self.z == 0.0
+
+    def command_for(self, x: float, y: float, z: float, rz: float):
+        """(x, y, z) where the TIP must land → the toolhead pose to command."""
+        theta = math.radians(rz)
+        dx = self.x * math.cos(theta) - self.y * math.sin(theta)
+        dy = self.x * math.sin(theta) + self.y * math.cos(theta)
+        return x - dx, y - dy, z - self.z
+
+
+@dataclass
 class PositionOffset:
     x: float = 0.0
     y: float = 0.0
@@ -189,6 +219,14 @@ class Cobot_Operation_Report:
 GRIPPER_ON = True
 GRIPPER_OFF = False
 
+# Pick heights, as TOOL TIP height in robot base mm (the tool offset converts
+# them to a commanded toolhead pose). With tool_offset_mm = [0,0,0] these are
+# commanded-toolhead heights, which is what they were before the offset
+# existed — so the default is bit-identical to the previous behavior. Set a
+# non-zero tool Z and these must be re-measured as tip heights.
+PICK_TIP_Z_MM = 300.0
+APPROACH_TIP_Z_MM = 401.0
+
 
 
 
@@ -207,7 +245,18 @@ class Cobot:
         self.sensors["left_complete"] = Cobot_Sensor("left_complete",1,3)
 
         self.last_placed: place_position = place_position.left
-    
+
+        # Tool tip vs the commanded toolhead point. Applied to vision-derived
+        # pick poses only: teach points (trajectories.json) and move_to() are
+        # already commanded-toolhead poses and stay raw — in particular the
+        # calibration grid must command the toolhead, because the vision side
+        # adds its own marker_offset_mm to the same commanded pose.
+        offset = cobot_configs.get("tool_offset_mm") or [0.0, 0.0, 0.0]
+        self.tool_offset = ToolOffset(
+            x=float(offset[0]), y=float(offset[1]), z=float(offset[2])
+        )
+
+
 
         for attempt in range(5):
             result = self.robot.connect()
@@ -248,13 +297,19 @@ class Cobot:
                 return True
             return False
 
-        tooling_offset_z = self.cobot_configs["tool_head_length_mm"]
-        tooling_offset_xy = self.cobot_configs["tool_head_xy_offset"]
-        compression_offset = self.cobot_configs["tool_head_compression_distance_mm"]
+        # can.real_x/real_y are where the CAN is in robot base coords. The
+        # tool tip must land there, so command the toolhead pose that puts it
+        # there (tool_head_compression_distance_mm is not applied yet).
+        pick_x, pick_y, pick_z = self.tool_offset.command_for(
+            can.real_x, can.real_y, PICK_TIP_Z_MM, can.real_rz
+        )
+        above_x, above_y, above_z = self.tool_offset.command_for(
+            can.real_x, can.real_y, APPROACH_TIP_Z_MM, can.real_rz
+        )
 
-        cobot_pickup_position = motoman_cpp.Position(can.real_x, can.real_y, 300, 180, 0, can.real_rz)
-        cobot_address_can_position = motoman_cpp.Position(can.real_x, can.real_y,401, 180, 0,can.real_rz)
-        cobot_up = motoman_cpp.Position(can.real_x, can.real_y,401, 180, 0,can.real_rz)
+        cobot_pickup_position = motoman_cpp.Position(pick_x, pick_y, pick_z, 180, 0, can.real_rz)
+        cobot_address_can_position = motoman_cpp.Position(above_x, above_y, above_z, 180, 0, can.real_rz)
+        cobot_up = motoman_cpp.Position(above_x, above_y, above_z, 180, 0, can.real_rz)
 
         pickup_trajectory = [
             [cobot_address_can_position,None],

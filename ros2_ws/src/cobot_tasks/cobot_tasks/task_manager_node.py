@@ -56,7 +56,6 @@ PICK_TIMEOUT_SEC = 300.0        # one full pick+place choreography
 MOVE_TIMEOUT_SEC = 120.0        # one calibration grid move
 # calibration_begin lazy-loads the red-dot model on the vision side.
 CAL_BEGIN_TIMEOUT_SEC = 120.0
-CAL_SAMPLE_TIMEOUT_SEC = 30.0
 CAL_COMPUTE_TIMEOUT_SEC = 60.0
 
 
@@ -76,6 +75,10 @@ class TaskManagerNode(Node):
         self.declare_parameter("calibration_grid_size", [3, 2])  # nx, ny per level
         self.declare_parameter("calibration_orientation_deg", [180.0, 0.0, 0.0])
         self.declare_parameter("calibration_settle_sec", 0.5)
+        # How long one calibration_sample may take. Automatic (red-dot) mode
+        # needs seconds; the temporary manual centre-select mode waits on a
+        # human, so this must exceed localization's manual_click_timeout_sec.
+        self.declare_parameter("calibration_sample_timeout_sec", 30.0)
 
         # Auto extrinsic re-calibration at startup: with intrinsics known (from
         # the camera SDK), a small grid corrects for camera drift each boot.
@@ -508,6 +511,9 @@ class TaskManagerNode(Node):
         try:
             rx, ry, rz = self.get_parameter("calibration_orientation_deg").value
             settle = float(self.get_parameter("calibration_settle_sec").value)
+            sample_timeout = float(
+                self.get_parameter("calibration_sample_timeout_sec").value
+            )
 
             self._publish_status(
                 TaskStatus.STATE_CALIBRATING,
@@ -556,7 +562,7 @@ class TaskManagerNode(Node):
                 sample = self._call(
                     self._cal_sample_client,
                     CalibrationSample.Request(x=x, y=y, z=z),
-                    CAL_SAMPLE_TIMEOUT_SEC,
+                    sample_timeout,
                 )
                 if sample.success:
                     collected = sample.sample_count

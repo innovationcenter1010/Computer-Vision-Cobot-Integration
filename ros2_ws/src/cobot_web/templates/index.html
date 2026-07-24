@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>Cobot Control Panel</title>
-    <link rel="stylesheet" href="/static/style.css?v=7">
+    <link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 
 <body>
@@ -20,6 +20,12 @@
                         Save Images
                     </button>
                 </div>
+
+                <!-- TEMPORARY manual centre select: shown while localization
+                     is waiting for the calibration marker to be clicked. -->
+                <p id="marker_click_prompt" class="marker-prompt" style="display: none;">
+                    Click the centre of the calibration marker on the color feed.
+                </p>
 
                 <div class="vision-grid">
                     <div class="vision-item">
@@ -96,6 +102,6 @@
         </div>
     </main>
 
-    <script type="module" src="/static/app.js?v=5"></script>
+    <script type="module" src="/static/app.js?v=6"></script>
 </body>
 </html>
