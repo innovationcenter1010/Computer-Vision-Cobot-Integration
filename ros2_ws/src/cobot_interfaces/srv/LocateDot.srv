@@ -1,0 +1,9 @@
+# Find the red calibration dot (marker mounted on the cobot) in the latest
+# color frame. Served by yolo_node (red_dot_best.pt, lazy-loaded); called by
+# localization_node while it runs the camera->robot calibration routine.
+---
+bool found
+float64 u             # pixel x of the dot center
+float64 v             # pixel y of the dot center
+float64 confidence
+string message        # why not found (no frame / model missing / below threshold)

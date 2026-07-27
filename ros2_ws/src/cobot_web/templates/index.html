@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cobot Control Panel</title>
+    <link rel="stylesheet" href="/static/style.css?v=9">
+</head>
+
+<body>
+    <main class="page">
+        <h1>Cobot Control Panel</h1>
+
+        <div class="dashboard-grid">
+
+            <section class="card feed-card">
+                <div class="image-header">
+                    <h2>Live Camera Feed</h2>
+                    <p id="stream_status" class="stream-status">waiting for frames&hellip;</p>
+
+                    <button type="button" onclick="sendCommand(Receiver.CAMERA,CameraCommands.SAVE)" class="refresh-button">
+                        Save Images
+                    </button>
+                </div>
+
+                <!-- TEMPORARY manual centre select: shown while localization
+                     is waiting for the calibration marker to be clicked. -->
+                <div id="marker_click_prompt" class="marker-prompt" style="display: none;">
+                    <span>Click the centre of the calibration marker on the color feed.</span>
+                    <button type="button" onclick="skipMarkerPose()" class="marker-skip">
+                        Marker not in frame — skip pose
+                    </button>
+                </div>
+
+                <div class="vision-grid">
+                    <div class="vision-item">
+                        <h3>Color</h3>
+                        <img id="rgb_image" alt="No color frames yet">
+                    </div>
+
+                    <div class="vision-item">
+                        <h3>Depth</h3>
+                        <img id="depth_image" alt="No depth frames yet">
+                    </div>
+                </div>
+            </section>
+
+            <section class="card robot-card">
+                <h2>Robot Commands</h2>
+
+                <button type="button" onclick="sendCommand(Receiver.COBOT,CobotCommands.START)" class="start">
+                    Start
+                </button>
+
+                <button type="button" onclick="sendCommand(Receiver.COBOT,CobotCommands.CALIBRATE)" class="start">
+                    Calibrate
+                </button>
+
+                <button type="button" onclick="sendCommand(Receiver.COBOT,CobotCommands.STOP)" class="danger">
+                    Stop
+                </button>
+
+                <p id="robot_command_status"></p>
+
+
+                <div class="speed-control">
+                    <h3>Cobot Speed</h3>
+
+                    <input
+                        id="cobot_speed_slider"
+                        type="range"
+                        min="1"
+                        max="4"
+                        step="1"
+                        value="2"
+                        oninput="handleSpeedSliderInput()"
+                    >
+
+                    <div class="speed-labels">
+                        <span>Slow</span>
+                        <span>Medium</span>
+                        <span>Fast</span>
+                        <span>Max</span>
+                    </div>
+
+                <div class="feedback-section">
+                    <h3>Cobot Feedback</h3>
+
+                    <div id="cobot_feedback_box" class="feedback-box">
+                        <p id="cobot_feedback">No cobot messages yet.</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card image-card">
+                <div class="image-header">
+                    <h2>Latest Vision Image</h2>
+
+                    <button type="button" onclick="loadLatestImage()" class="refresh-button">
+                        Refresh Image
+                    </button>
+                </div>
+
+                <img id="latest_image" src="" alt="No image found">
+            </section>
+
+        </div>
+    </main>
+
+    <script type="module" src="/static/app.js?v=7"></script>
+</body>
+</html>

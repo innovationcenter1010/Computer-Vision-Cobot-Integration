@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cobot_control</name>
+  <version>0.1.0</version>
+  <description>
+    Single cobot node (Python, pybind — NOT a C++ ROS node).
+    cobot_node is the motion execution server: it serves the PickCan and
+    MoveToPose actions (one goal at a time, native cancel) — all decisions
+    and sequencing live in cobot_tasks/task_manager. The Cobot class drives
+    the Motoman through the motoman_cpp pybind extension exactly as the
+    legacy application did.
+  </description>
+  <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_srvs</depend>
+  <depend>cobot_interfaces</depend>
+
+  <!-- pybind extension; provides the motoman_cpp python module -->
+  <exec_depend>motoman_cpp</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

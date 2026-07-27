@@ -1,0 +1,8 @@
+# Tier-1 sensing: median depth at the last scan's detection pixels → which
+# layer is on top? Replaces the legacy 70%-count layer-completion heuristic
+# (bin.py) with a measurement. Served by localization_node; called by the task
+# manager when a layer's targets are exhausted.
+
+---
+float64 median_z      # median live depth at the last detection pixels, mm
+int8 layer_index      # nearest layer number derived from can_height_mm; -1 if unknown

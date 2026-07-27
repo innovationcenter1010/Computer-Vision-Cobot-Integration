@@ -1,0 +1,8 @@
+# Shell scripts must stay LF — they run inside the Linux container.
+# (CRLF in the shebang breaks exec: "/usr/bin/env: 'bash\r': No such file")
+*.sh text eol=lf
+
+# Keep other Linux-consumed text files LF too.
+Dockerfile text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf

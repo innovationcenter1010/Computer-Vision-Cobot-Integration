@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cobot_camera</name>
+  <version>0.1.0</version>
+  <description>
+    ZMQ-to-ROS bridge for the external color/depth camera streamer.
+    Wraps the legacy CameraStream (background SUB threads) and republishes
+    frames as sensor_msgs/Image on /camera/color/image_raw and
+    /camera/depth/image_raw.
+  </description>
+  <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-zmq</exec_depend>
+  <!-- opencv: /camera/save_frames PNG writing (and frame_saver) -->
+  <exec_depend>python3-opencv</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

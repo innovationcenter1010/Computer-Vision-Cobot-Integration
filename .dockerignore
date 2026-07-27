@@ -1,31 +1,41 @@
+# =============================================================
+# Keep the build context lean. The ROS2 Dockerfile only COPYs
+# ros2_ws/src and docker/entrypoint.sh — everything else is noise.
+# =============================================================
+
+# --- Version control ---
 .git
 .gitmodules
+.gitignore
 
-build
+# --- IDE / local tooling ---
+.vscode
 cmake-build-debug
 cmake-build-release
 
-pycache
-*.pyc
+# --- colcon build output (builder stage builds fresh) ---
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+build/
 
-datasets
-outputs
-models
+# --- Legacy application + old C++ tree (motoman_cpp package has its own copy) ---
+legacy/
+cpp/
+app/
+docs/
 
-.vscode
+# --- Model weights: NEVER baked — vision_workspace is bind-mounted ---
+*.pt
+vision_workspace/
 
-cpp/third_party/pybind/docs
-cpp/third_party/pybind/tests
-cpp/third_party/pybind/.github
-
-*.svg
-
-vision_workspace/operation/inbox
-vision_workspace/operation/debug_images
-vision_workspace/operation/results
-vision_workspace/models/training_runs
-
+# --- Python cache ---
 __pycache__/
 **/__pycache__/
 *.pyc
 *.pyo
+
+# --- Misc ---
+*.svg
+datasets
+outputs

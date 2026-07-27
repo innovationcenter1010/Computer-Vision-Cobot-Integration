@@ -1,0 +1,217 @@
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #c4c1bb;
+}
+
+.page {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+h1{
+    margin-bottom: 24px;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.card {
+    background: white;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.robot-card {
+    min-height: 500px;
+}
+
+.image-card {
+    min-height: 500px;
+}
+
+.image-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 10px;
+}
+
+.image-header h2 { 
+    margin: 0; 
+} 
+
+.refresh-button {
+    margin: 0; 
+    white-space: nowrap; 
+}
+
+label {
+    display: block;
+    margin-top: 12px;
+    font-weight: bold;
+}
+
+input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    margin-top: 4px;
+}
+
+
+button {
+    padding: 10px 16px;
+    margin: 12px 8px 8px 0;
+    border-radius: 6px;
+    cursor: pointer;
+    border: none;
+}
+
+.start {
+    background: #007a3d;
+    color: white;
+}
+
+.danger {
+    background: #b00020;
+    color: white;
+}
+
+#latest_image {
+    width: 100%;
+    max-height: 520px;
+    object-fit: contain;
+    border: 1px solid #ccc;
+    background: #222;
+    margin-top: 0;
+}
+
+#save_status,
+#robot_command_status {
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+.vision-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    align-items: start;
+}
+
+.vision-item img {
+    width: 100%;
+    height: auto;
+    border-radius: 6px;
+}
+
+/* --- live camera / depth feed --- */
+
+.feed-card {
+    grid-column: 1 / -1;   /* full-width row above the control cards */
+}
+
+.vision-item h3 {
+    margin: 0 0 6px;
+}
+
+.vision-item img {
+    min-height: 220px;
+    object-fit: contain;
+    background: #222;
+    border: 1px solid #ccc;
+}
+
+.stream-status {
+    margin: 0;
+    font-weight: bold;
+    color: #555;
+}
+
+/* --- controls --- */
+/* (was accidentally trapped in an unclosed @media block) */
+
+.button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.speed-control {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #ddd;
+}
+
+#cobot_speed_slider {
+    width: 100%;
+    margin-top: 8px;
+}
+
+.speed-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+#cobot_speed_status {
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+@media (max-width: 900px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+}
+/* ---- TEMPORARY: manual calibration-marker centre select ---- */
+/* Delete with the localization-side manual_dot_selection flag. */
+
+.marker-prompt {
+    margin: 8px 0;
+    padding: 8px 12px;
+    border-radius: 4px;
+    background: #fff4d6;
+    border: 1px solid #e0a800;
+    color: #6b4e00;
+    font-weight: bold;
+}
+
+#rgb_image.awaiting-click {
+    cursor: crosshair;
+    outline: 3px solid #e0a800;
+}
+
+/* skip button inside the marker prompt (temporary, with the block above) */
+.marker-prompt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.marker-skip {
+    flex: none;
+    padding: 6px 12px;
+    border: 1px solid #6b4e00;
+    border-radius: 4px;
+    background: #6b4e00;
+    color: #fff4d6;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.marker-skip:hover {
+    background: #543d00;
+}
