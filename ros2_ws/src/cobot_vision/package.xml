@@ -16,12 +16,13 @@
                            task_manager drives the robot between them) and the
                            cheap tier-1 depth checks (VerifyTarget,
                            GetLayerHeight). Refuses to localize uncalibrated.
-    train_yolo_obb.py is an offline tool, not a node.
+    Training/export tools live in vision_workspace/tools/ (dev-PC .venv), not here.
   </description>
   <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
+  <depend>cobot_health</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>

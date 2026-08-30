@@ -3,7 +3,7 @@
 # docs/ros2_architecture.md §6). Values migrated from legacy/config.JSON.
 #
 # Structured data (place trajectories) lives in trajectories.json, referenced
-# by cobot_node.trajectories_file — launch resolves it to the installed share
+# by cobot_operation.trajectories_file — launch resolves it to the installed share
 # path unless overridden. The fitted camera→robot transform lives in
 # calibration.yaml next to this file (written by the calibration routine,
 # injected as localization_node.calibration_file by launch).
@@ -24,7 +24,7 @@ camera_node:
 
 yolo_node:
   ros__parameters:
-    model_path: "/ws/vision_workspace/models/cans_obb_best.pt"
+    model_path: "/ws/vision_workspace/weights/cans_obb_best.pt"
     confidence: 0.50
     iou: 0.4
     max_detections: 20
@@ -32,7 +32,7 @@ yolo_node:
     remove_duplicates: true
     duplicate_center_distance_px: 50.0
     # Calibration marker model (/vision/locate_dot), lazy-loaded on first use.
-    dot_model_path: "/ws/vision_workspace/models/red_dot_best.pt"
+    dot_model_path: "/ws/vision_workspace/weights/red_dot_best.pt"
     dot_confidence: 0.5
 
 localization_node:
@@ -53,7 +53,8 @@ localization_node:
     # Red dot relative to the OFFICIAL toolhead point (the commanded TCP),
     # [x, y, z] mm along ROBOT BASE axes with the arm at the calibration
     # orientation. Measure to the dot surface the camera sees. This is the
-    # dot's half of the pair — the tooling's half is cobot_node.tool_offset_mm;
+    # dot's half of the pair — the tooling's half is tools.<name>.tip_offset_mm
+    # in cobot_setup.yaml;
     # both hang off the same point, so measure them separately.
     # MEASURE AND SET BEFORE CALIBRATING.
     marker_offset_mm: [0.0, 0.0, 300.0]
@@ -77,30 +78,40 @@ localization_node:
     manual_click_timeout_sec: 120.0
     # calibration_file is injected by robot.launch.py (bind-mounted config dir).
 
-cobot_node:
+cobot_control:
   ros__parameters:
+    # C++ hardware node — the only process on the YMConnect link.
     robot_ip: "192.168.1.31"
-    # --- offsets from the OFFICIAL toolhead point (the pose the controller
-    # commands) --- two things hang off it and neither sits on it:
-    #   * the end of the tooling  -> tool_offset_mm (here)
-    #   * the red calibration dot -> localization_node.marker_offset_mm
-    # Same origin, different features: MEASURE THEM SEPARATELY, both as
-    # [x, y, z] mm along ROBOT BASE axes with the arm at rz=0 and the pick
-    # orientation (rx=180, ry=0). XY rotates with the commanded rz; Z does not.
-    #
-    # Applied to vision-derived pick poses only. Teach points
-    # (trajectories.json) and the calibration grid are already commanded-
-    # toolhead poses and stay raw.
-    #
-    # NOTE: zeros = tip is the toolhead point = the behavior before this
-    # param existed. Setting a non-zero Z also changes what the pick and
-    # approach heights mean (they become TIP heights, PICK_TIP_Z_MM /
-    # APPROACH_TIP_Z_MM in cobot.py) — re-measure them if you set one.
-    tool_offset_mm: [0.0, 0.0, -600.0]
-    # How far to press into the can. Declared but not yet applied.
-    tool_head_compression_distance_mm: 50.0
-    # trajectories_file is injected by robot.launch.py (share path);
-    # set it here only to override.
+    # Everything read from the controller (state, named sensors/outputs,
+    # pose) is polled at this period and published on /cobot/state. 0.1 =
+    # 10 Hz; raise it if CobotState.poll_ms gets close to the period.
+    poll_period_s: 0.1
+    connect_retry_period_s: 1.0
+    connect_timeout_ms: 500      # YMConnect receive timeout per packet
+    connect_retries: 3
+    ymconnect_logging: false     # SDK writes YMConnectLog.txt next to the .so
+    motion_timeout_s: 100.0      # per MoveToPose, moving time only (< task_manager 120)
+    # Pause = MotionStop(false) then MotionStart() to resume. If the firmware
+    # does not hold position that way, switch to the controller HOLD signal.
+    pause_uses_hold: false
+    check_reachability: true     # IK check before every move
+    pendant_messages: true       # mirror status transitions on the teach pendant
+    # Named sensors / outputs / motion profiles live in cobot_setup.yaml
+    # (setup_file is injected by robot.launch.py).
+
+cobot_operation:
+  ros__parameters:
+    # Pick choreography (Python). Tool profiles live in cobot_setup.yaml
+    # (`tools`, `active_tool`); set active_tool here to override the file.
+    # The tip offset that used to be cobot_node.tool_offset_mm is now
+    # tools.<name>.tip_offset_mm — same meaning, see the comments there.
+    active_tool: ""
+    move_timeout_s: 120.0
+    service_timeout_s: 5.0
+    # Named-sensor assertion budget (was 5 tries x 0.2 s on the pybind path;
+    # now "wait for a matching /cobot/state sample").
+    sensor_assert_timeout_s: 1.0
+    # setup_file and trajectories_file are injected by robot.launch.py.
 
 task_manager:
   ros__parameters:
@@ -142,3 +153,19 @@ web_node:
     results_dir: "/ws/vision_workspace/operation/results"
     # params_file is injected by robot.launch.py so /api/config edits
     # persist to this file.
+
+health_monitor:
+  ros__parameters:
+    # Nodes that MUST heartbeat; a missing one shows UNKNOWN, a silent one
+    # STALE after stale_factor x its own heartbeat_period_s (default 2 s).
+    expected_nodes:
+      - camera_node
+      - yolo_node
+      - localization_node
+      - cobot_control
+      - cobot_operation
+      - task_manager
+      - web_node
+      - health_monitor
+    stale_factor: 3.0
+    summary_period_s: 1.0

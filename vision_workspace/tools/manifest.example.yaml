@@ -1,0 +1,35 @@
+# EXAMPLE ONLY — this is what export_yoloe.py writes to
+# vision_workspace/models/<name>/manifest.yaml. Nothing has been exported yet;
+# the sha256, anchor count and class list below are placeholders.
+#
+# Field-for-field identical to the schema the Unitree-G1-Development detector
+# reads (models/yoloe_fixed_v1/manifest.yaml), except the input geometry is
+# the cobot camera's 640x480 instead of the G1's 960x544.
+schema_version: 1
+name: yoloe_cobot_v1
+type: detector
+onnx: yoloe_cobot_v1.onnx
+onnx_sha256: <filled in by export_yoloe.py>
+input:
+  name: images
+  width: 640
+  height: 480
+  layout: nchw
+  normalize: div255
+output:
+  name: output0
+  layout: yolo_seg        # [1, 4 + nc + 32, anchors]; boxes decoded, masks skipped
+  box_channels: 4
+  mask_coeff_channels: 32
+  anchors: 6300           # 480x640 at strides 8/16/32 = 4800 + 1200 + 300
+unused_outputs:
+- output1                 # mask protos
+classes:                  # ORDER = class index; chosen via classes_cobot.yaml or --prompts
+- can
+- green light
+- red dot
+letterbox:
+  pad_value: 114
+defaults:
+  conf_threshold: 0.35
+  nms_iou: 0.5

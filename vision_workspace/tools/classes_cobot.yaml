@@ -1,0 +1,28 @@
+# Prompt vocabulary baked into the YOLOE export (mirrors classes_g1.yaml in
+# Unitree-G1-Development/tools/models).
+#
+# ORDER MATTERS: the list order becomes the class-index mapping inside the
+# ONNX head and is recorded verbatim in the model manifest — reordering is a
+# new model version, not an edit.
+#
+# YOLOE accepts arbitrary noun phrases, not just COCO nouns:
+#   - "aluminium can"
+#   - "green indicator light"
+#   - "robot gripper"
+# Short, visually distinctive phrases work best.
+#
+# You can also bypass this file entirely and pick prompts on the command line:
+#   python tools/export_yoloe.py --prompts "red can" "green light" "gripper"
+#
+# After editing, re-export:  python tools/export_yoloe.py --name yoloe_cobot_vN
+# (bump the name/version when the prompt set changes — the manifest sha256
+# changes with it).
+
+classes:
+  # TODO(user): fill in the real prompt set before the first export.
+  # Nothing has been exported yet — this list is a placeholder.
+  - green light
+  - green dot
+  - white robot
+
+

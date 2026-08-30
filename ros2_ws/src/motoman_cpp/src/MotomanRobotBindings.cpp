@@ -73,6 +73,9 @@ PYBIND11_MODULE(motoman_cpp, m)
         .def("connect", &MotomanRobot::connect)
         .def("disconnect", &MotomanRobot::disconnect)
 
+        // live link state maintained by the C++ connection watchdog (atomic, never blocks)
+        .def("is_connected", &MotomanRobot::is_connected)
+
         // integer API
         .def("read_int", &MotomanRobot::read_int)
         .def("write_int", &MotomanRobot::write_int)

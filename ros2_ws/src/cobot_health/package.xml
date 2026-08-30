@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cobot_health</name>
+  <version>0.1.0</version>
+  <description>
+    System health: the HeartbeatPublisher helper every node embeds (one
+    low-frequency Heartbeat on /health/heartbeat with node-specific metrics)
+    and the health_monitor node that aggregates them into a latched
+    /health/summary with staleness detection. Depends on rclpy +
+    cobot_interfaces only, so every package (including cobot_tasks) may use it.
+  </description>
+  <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>cobot_interfaces</depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

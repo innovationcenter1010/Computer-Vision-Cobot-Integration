@@ -1,86 +1,59 @@
 // Query param busts the module cache when commands change (bump with app.js version).
 import { VisionCommands, CobotCommands, CameraCommands, Receiver, ReceiverCommands } from "./commands.js?v=4";
 
+// Pick monitor gate. When false, a "picked" event colors its box green
+// regardless of the post-pick depth verification; when true, a pick is only
+// shown green once /vision/verify_target confirmed the can is gone (amber
+// otherwise). Flip once the depth check is trusted on the real cell.
+const USE_VERIFY_GATE = false;
 
-function setFieldValue(id, value) {
-    const element = document.getElementById(id);
-    if (element && value !== undefined && value !== null) {
-        element.value = value;
-    }
-}
-
-async function loadConfig() {
-    const response = await fetch("/api/config");
-    const config = await response.json();
-
-    // Config is the bringup params YAML: {node_name: {ros__parameters: {...}}}
-    const cobotParams = config.cobot_node?.ros__parameters ?? {};
-    const yoloParams = config.yolo_node?.ros__parameters ?? {};
-
-    setFieldValue("robot_ip", cobotParams.robot_ip);
-    setFieldValue("confidence_threshold", yoloParams.confidence);
-}
-
-async function saveConfig() {
-    const config = {
-        robot_ip: document.getElementById("robot_ip").value,
-        camera_ip: document.getElementById("camera_ip").value,
-        save_folder: document.getElementById("save_folder").value,
-        confidence_threshold: parseFloat(document.getElementById("confidence_threshold").value),
-        enable_motion: document.getElementById("enable_motion").checked
-    };
-
-    console.log("Saving config:", config);
-
-    const response = await fetch("/api/config", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify(config)
-    });
-
-    const result = await response.json();
-
-    console.log("Server response:", result);
-
-    document.getElementById("save_status").innerText = "Saved!";
-}
-
-/*
-async function loadLatestImage() {
-    const response = await fetch("/api/latest-image?t=" + new Date().getTime());
-    const result = await response.json();
-
-    console.log("Latest image result:", result);
-
-    const img = document.getElementById("latest_image");
-
-    if (result.image === null) {
-        img.src = "";
-        img.alt = "No image found";
-    } else {
-        img.src = result.image + "?t=" + new Date().getTime();
-        img.alt = "Latest image";
-    }
-}
-
-*/
+const STREAM_STALL_MS = 3000;
+const HEALTH_STALL_MS = 3500;
 
 let socket = null;
+
+// ------------------- small DOM helpers -------------------
+
+function byId(id) {
+    return document.getElementById(id);
+}
+
+function setText(id, text) {
+    const element = byId(id);
+    if (element) element.innerText = text;
+}
+
+function setPill(id, level, text) {
+    const element = byId(id);
+    if (!element) return;
+    element.className = "pill " + (level ? "lvl-" + level : "pill-neutral");
+    element.innerHTML = '<span class="dot"></span>' + escapeHtml(text);
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
 
 // ------------------- live camera / depth feed -------------------
 
 let lastFrameTime = null;
-
-function setText(id, text) {
-    const element = document.getElementById(id);
-    if (element) element.innerText = text;
-}
+let lastColorTime = null;
+let lastDepthTime = null;
+let frameCount = 0;
+let frameWindowStart = null;
+let measuredHz = 0;
 
 function updateFeedImage(id, base64Jpeg) {
     if (!base64Jpeg) return; // keep the last good frame on screen
-    const img = document.getElementById(id);
+    const img = byId(id);
     if (img) img.src = "data:image/jpeg;base64," + base64Jpeg;
 }
 
@@ -88,22 +61,301 @@ function handleCameraFrame(data) {
     updateFeedImage("rgb_image", data.rgb);
     updateFeedImage("depth_image", data.depth);
 
-    if (data.rgb || data.depth) {
-        lastFrameTime = Date.now();
+    const now = Date.now();
+    if (data.rgb) lastColorTime = now;
+    if (data.depth) lastDepthTime = now;
 
-        let status = "live";
-        if (!data.rgb) status += " (no color)";
-        if (!data.depth) status += " (no depth)";
-        setText("stream_status", status);
+    if (data.rgb || data.depth) {
+        lastFrameTime = now;
+        if (frameWindowStart === null) frameWindowStart = now;
+        frameCount += 1;
+        if (now - frameWindowStart >= 1000) {
+            measuredHz = frameCount / ((now - frameWindowStart) / 1000);
+            frameCount = 0;
+            frameWindowStart = now;
+        }
+        refreshStreamStatus();
+    }
+    drawOverlay();
+}
+
+function refreshStreamStatus() {
+    const now = Date.now();
+    if (lastFrameTime === null) return;
+
+    const colorAge = lastColorTime === null ? null : (now - lastColorTime) / 1000;
+    const depthAge = lastDepthTime === null ? null : (now - lastDepthTime) / 1000;
+    const colorImg = byId("rgb_image");
+    const depthImg = byId("depth_image");
+
+    setText("color_meta", describeFeed(colorImg, colorAge));
+    setText("depth_meta", describeFeed(depthImg, depthAge));
+
+    if (now - lastFrameTime > STREAM_STALL_MS) {
+        setPill("stream_status", "error", "stream stalled");
+        return;
+    }
+    const missing = [];
+    if (colorAge === null || colorAge > STREAM_STALL_MS / 1000) missing.push("no color");
+    if (depthAge === null || depthAge > STREAM_STALL_MS / 1000) missing.push("no depth");
+    if (missing.length) {
+        setPill("stream_status", "warn", "live (" + missing.join(", ") + ")");
+    } else {
+        setPill("stream_status", "ok", "live · " + measuredHz.toFixed(1) + " Hz");
     }
 }
 
-// Mark the feed as stalled if frames stop arriving.
-setInterval(function () {
-    if (lastFrameTime !== null && Date.now() - lastFrameTime > 3000) {
-        setText("stream_status", "stream stalled");
+function describeFeed(img, age) {
+    if (age === null) return "no frames";
+    const size = img && img.naturalWidth ? img.naturalWidth + "×" + img.naturalHeight + " · " : "";
+    return size + "age " + age.toFixed(2) + " s";
+}
+
+setInterval(refreshStreamStatus, 1000);
+
+// ------------------- detection overlay (latest scan) -------------------
+
+let lastDetections = null;                 // {image_width, image_height, detections[]}
+const pickStateByDetection = new Map();    // detection_index -> "picked" | "unverified" | "failed" | "skipped"
+
+function handleDetections(data) {
+    lastDetections = data;
+    pickStateByDetection.clear();          // a new scan invalidates old pick colors
+    pickEvents = [];
+    renderPickMonitor();
+    drawOverlay();
+}
+
+function boxState(detectionIndex) {
+    return pickStateByDetection.get(detectionIndex) || "pending";
+}
+
+function colorForState(state) {
+    switch (state) {
+        case "picked": return cssVar("--ok");
+        case "unverified": return cssVar("--warn");
+        case "failed": return cssVar("--error");
+        case "skipped": return cssVar("--stale");
+        default: return cssVar("--primary");
     }
-}, 1000);
+}
+
+function drawOverlay() {
+    const canvas = byId("rgb_overlay");
+    const img = byId("rgb_image");
+    if (!canvas || !img) return;
+
+    const ctx = canvas.getContext("2d");
+    const width = img.clientWidth;
+    const height = img.clientHeight;
+    if (!width || !height) return;
+    if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+    }
+    ctx.clearRect(0, 0, width, height);
+
+    if (!lastDetections || !lastDetections.detections.length) return;
+    if (!img.naturalWidth || !img.naturalHeight) return;
+
+    // The <img> is object-fit: contain inside a 4:3 frame — map image pixels
+    // to the rendered rectangle, not the element box.
+    const scale = Math.min(width / img.naturalWidth, height / img.naturalHeight);
+    const drawnW = img.naturalWidth * scale;
+    const drawnH = img.naturalHeight * scale;
+    const offsetX = (width - drawnW) / 2;
+    const offsetY = (height - drawnH) / 2;
+    const sx = drawnW / (lastDetections.image_width || img.naturalWidth);
+    const sy = drawnH / (lastDetections.image_height || img.naturalHeight);
+
+    ctx.lineWidth = 2.5;
+    ctx.font = "500 11px 'IBM Plex Mono', ui-monospace, monospace";
+
+    for (const det of lastDetections.detections) {
+        const color = colorForState(boxState(det.index));
+        const pts = [];
+        for (let i = 0; i < 8; i += 2) {
+            pts.push([offsetX + det.corners_px[i] * sx, offsetY + det.corners_px[i + 1] * sy]);
+        }
+
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.closePath();
+        ctx.stroke();
+
+        const label = "#" + (det.index + 1) + "  " + det.confidence.toFixed(2);
+        const lx = Math.min(...pts.map(p => p[0]));
+        const ly = Math.min(...pts.map(p => p[1]));
+        const tw = ctx.measureText(label).width + 10;
+        ctx.fillStyle = color;
+        ctx.fillRect(lx, Math.max(0, ly - 18), tw, 18);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, lx + 5, Math.max(13, ly - 5));
+    }
+}
+
+window.addEventListener("resize", drawOverlay);
+
+// ------------------- pick monitor -------------------
+
+let pickEvents = [];   // ordered {index,total,detection_index,outcome,verify_ran,verified,measured_z,message}
+
+function pickState(event) {
+    if (event.outcome === "picked") {
+        if (USE_VERIFY_GATE && !event.verified) return "unverified";
+        if (!USE_VERIFY_GATE && event.verify_ran && !event.verified) return "unverified";
+        return "picked";
+    }
+    if (event.outcome === "failed") return "failed";
+    if (event.outcome === "skipped") return "skipped";
+    return "pending";
+}
+
+function handlePickEvent(event) {
+    pickEvents = pickEvents.filter(e => e.index !== event.index);
+    pickEvents.push(event);
+    pickEvents.sort((a, b) => a.index - b.index);
+    if (event.detection_index >= 0) {
+        pickStateByDetection.set(event.detection_index, pickState(event));
+    }
+    renderPickMonitor();
+    drawOverlay();
+}
+
+function renderPickMonitor() {
+    const list = byId("pick_list");
+    if (!list) return;
+
+    setText("pick_gate", USE_VERIFY_GATE ? "gate: depth verify ON" : "gate: depth verify (flag off)");
+
+    const total = lastDetections ? lastDetections.detections.length : 0;
+    if (!total) {
+        setPill("pick_summary", null, "no scan yet");
+        list.innerHTML = "";
+        return;
+    }
+
+    const picked = pickEvents.filter(e => e.outcome === "picked").length;
+    const failed = pickEvents.filter(e => e.outcome === "failed").length;
+    setPill("pick_summary", null, total + " detected · " + picked + " picked · " + failed + " failed");
+
+    const byIndex = new Map(pickEvents.map(e => [e.index, e]));
+    const layerTotal = pickEvents.length ? pickEvents[0].total : total;
+    const cards = [];
+    for (let i = 1; i <= layerTotal; i++) {
+        const event = byIndex.get(i);
+        const state = event ? pickState(event) : "pending";
+        let line = "awaiting pick";
+        let note = "";
+        if (event) {
+            if (event.outcome === "picked") {
+                line = state === "picked" ? "picked · verified" : "picked · depth not confirmed";
+                if (event.verify_ran) {
+                    note = "z " + event.measured_z.toFixed(0) + " mm" + (event.verified ? " ✓" : " — still present");
+                } else {
+                    note = "no depth verify";
+                }
+            } else if (event.outcome === "failed") {
+                line = "pick failed";
+                note = event.message;
+            } else {
+                line = "skipped";
+                note = event.message;
+            }
+        }
+        const det = event && event.detection_index >= 0 ? " · det " + (event.detection_index + 1) : "";
+        cards.push(
+            '<div class="pick ' + state + '" title="' + escapeHtml(event ? event.message : "") + '">' +
+            '<span class="idx">#' + i + escapeHtml(det) + '</span>' +
+            '<span class="out">' + escapeHtml(line) + '</span>' +
+            '<span class="z">' + escapeHtml(note) + '</span>' +
+            '</div>'
+        );
+    }
+    list.innerHTML = cards.join("");
+}
+
+// ------------------- system health -------------------
+
+let lastHealthTime = null;
+let lastHealth = null;
+
+const LEVEL_LABEL = { ok: "OK", warn: "Warn", error: "Error", stale: "Stale", unknown: "Unknown" };
+
+function handleHealth(data) {
+    lastHealthTime = Date.now();
+    lastHealth = data;
+    renderHealth();
+}
+
+function renderHealth() {
+    const list = byId("health_list");
+    if (!list || !lastHealth) return;
+
+    const rows = lastHealth.nodes.map(node => {
+        const chips = Object.entries(node.metrics || {}).map(([k, v]) => {
+            const bad = v === "false" && /connected|calibrated|model_loaded|intrinsics/.test(k);
+            return '<span class="chip' + (bad ? " bad" : "") + '">' + escapeHtml(k) + "=<b>" + escapeHtml(v) + "</b></span>";
+        }).join("");
+        const age = node.age_s < 0 ? "never" : node.age_s.toFixed(1) + " s";
+        return (
+            '<div class="node is-' + node.level + '">' +
+            '<span class="name">' + escapeHtml(node.name) + "</span>" +
+            '<span class="pill lvl-' + node.level + '"><span class="dot"></span>' + (LEVEL_LABEL[node.level] || node.level) + "</span>" +
+            '<span class="detail">' + escapeHtml(node.detail) + "</span>" +
+            '<span class="age">' + age + "</span>" +
+            '<div class="metrics">' + chips + "</div>" +
+            "</div>"
+        );
+    });
+    list.innerHTML = rows.join("");
+
+    const counts = { warn: 0, error: 0 };
+    for (const node of lastHealth.nodes) {
+        if (node.level === "warn") counts.warn++;
+        if (node.level === "error" || node.level === "stale" || node.level === "unknown") counts.error++;
+    }
+    if (counts.error) {
+        setPill("overall_health", "error", counts.error + " node" + (counts.error > 1 ? "s" : "") + " need attention");
+    } else if (counts.warn) {
+        setPill("overall_health", "warn", counts.warn + " warning" + (counts.warn > 1 ? "s" : ""));
+    } else {
+        setPill("overall_health", "ok", "all systems ok");
+    }
+    refreshHealthAge();
+}
+
+function refreshHealthAge() {
+    if (lastHealthTime === null) return;
+    const age = (Date.now() - lastHealthTime) / 1000;
+    if (age * 1000 > HEALTH_STALL_MS) {
+        setPill("health_age", "error", "health monitor offline (" + age.toFixed(0) + " s)");
+        setPill("overall_health", "stale", "health monitor offline");
+    } else {
+        setPill("health_age", null, "summary " + age.toFixed(1) + " s ago");
+    }
+}
+
+setInterval(refreshHealthAge, 1000);
+
+// ------------------- task status -------------------
+
+function handleTaskStatus(data) {
+    setText("task_state", data.state || "—");
+    const progress = byId("task_progress");
+    const bar = byId("task_bar");
+    if (data.progress_total) {
+        progress.style.display = "";
+        setPill("task_progress", null, data.progress_current + " / " + data.progress_total);
+        if (bar) bar.style.width = (100 * data.progress_current / data.progress_total) + "%";
+    } else {
+        progress.style.display = "none";
+        if (bar) bar.style.width = data.state === "idle" || data.state === "disconnected" ? "0%" : "100%";
+    }
+    setText("cobot_feedback", "state: " + data.state + (data.detail ? " — " + data.detail : ""));
+}
 
 // ------- TEMPORARY: manual calibration-marker centre select -------
 // While localization is waiting, clicking the color feed sends the clicked
@@ -115,10 +367,10 @@ let awaitingMarkerClick = false;
 function setMarkerPrompt(waiting) {
     awaitingMarkerClick = waiting;
 
-    const image = document.getElementById("rgb_image");
+    const image = byId("rgb_image");
     if (image) image.classList.toggle("awaiting-click", waiting);
 
-    const banner = document.getElementById("marker_click_prompt");
+    const banner = byId("marker_click_prompt");
     if (banner) banner.style.display = waiting ? "flex" : "none";
 }
 
@@ -126,16 +378,20 @@ function handleColorFeedClick(event) {
     if (!awaitingMarkerClick) return;
 
     const image = event.currentTarget;
-
-    // naturalWidth/Height are the true frame size (640x480); the element is
-    // CSS-scaled, so map the click back before sending pixels.
     if (!image.naturalWidth || !image.naturalHeight) return;
 
+    // object-fit: contain — map the click into the rendered image rectangle.
     const bounds = image.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
+    const scale = Math.min(bounds.width / image.naturalWidth, bounds.height / image.naturalHeight);
+    const drawnW = image.naturalWidth * scale;
+    const drawnH = image.naturalHeight * scale;
+    const offsetX = (bounds.width - drawnW) / 2;
+    const offsetY = (bounds.height - drawnH) / 2;
 
-    const u = (event.clientX - bounds.left) / bounds.width * image.naturalWidth;
-    const v = (event.clientY - bounds.top) / bounds.height * image.naturalHeight;
+    const u = (event.clientX - bounds.left - offsetX) / scale;
+    const v = (event.clientY - bounds.top - offsetY) / scale;
+    if (u < 0 || v < 0 || u > image.naturalWidth || v > image.naturalHeight) return;
 
     sendCommand(Receiver.VISION, VisionCommands.CLICK_CENTER, {
         u: Math.round(u),
@@ -162,60 +418,58 @@ function connectWebSocket() {
 
     socket.onopen = function () {
         console.log("WebSocket connected");
-        document.getElementById("robot_command_status").innerText = "WebSocket connected";
+        setPill("ws_status", null, "connected");
     };
 
     socket.onmessage = function (event) {
         const data = JSON.parse(event.data);
-        console.log("WebSocket message:", data);
 
-        if (data.type === "command_result") {
-            setText("robot_command_status", data.result.message);
-            return;
-        }
-
-        if (data.type === "camera_frame") {
-            handleCameraFrame(data);
-            return;
-        }
-
-        if (data.type === "cobot_status") {
-            setText(
-                "cobot_feedback",
-                "state: " + data.state + (data.detail ? " — " + data.detail : "")
-            );
-            return;
-        }
-
-        if (data.type === "layer_report") {
-            setText(
-                "cobot_feedback",
-                "layer done: " + data.successes + " ok / " + data.failures +
-                " failed" + (data.overall_ok ? "" : " (FAILED)")
-            );
-            return;
-        }
-
-        if (data.type === "targets") {
-            setText("robot_command_status", "vision: " + data.count + " targets found");
-            return;
-        }
-
-        // TEMPORARY manual centre select
-        if (data.type === "manual_dot_request") {
-            setMarkerPrompt(data.waiting);
-            return;
+        switch (data.type) {
+            case "camera_frame":
+                handleCameraFrame(data);
+                return;
+            case "command_result":
+                setText("robot_command_status", data.command + " → " + data.result.message);
+                return;
+            case "cobot_status":
+                handleTaskStatus(data);
+                return;
+            case "layer_report":
+                setText(
+                    "cobot_feedback",
+                    "layer done: " + data.successes + " ok / " + data.failures +
+                    " failed" + (data.overall_ok ? "" : " (FAILED)")
+                );
+                return;
+            case "targets":
+                setText("robot_command_status", "vision: " + data.count + " targets found");
+                return;
+            case "detections":
+                handleDetections(data);
+                return;
+            case "health":
+                handleHealth(data);
+                return;
+            case "pick_event":
+                handlePickEvent(data);
+                return;
+            case "manual_dot_request":   // TEMPORARY manual centre select
+                setMarkerPrompt(data.waiting);
+                return;
+            default:
+                console.log("WebSocket message:", data);
         }
     };
 
     socket.onclose = function () {
-        console.log("WebSocket disconnected");
-        document.getElementById("robot_command_status").innerText = "WebSocket disconnected";
+        console.log("WebSocket disconnected — retrying in 2 s");
+        setPill("ws_status", "error", "disconnected");
+        setTimeout(connectWebSocket, 2000);
     };
 
     socket.onerror = function (error) {
         console.log("WebSocket error:", error);
-        document.getElementById("robot_command_status").innerText = "WebSocket error";
+        setPill("ws_status", "error", "error");
     };
 }
 
@@ -226,92 +480,28 @@ function connectWebSocket() {
 /**
  * @param {ReceiverType} receiver
  */
-function sendCommand(receiver,command,payload = null) {
-    console.log("Sending command:", command);
-
-
-    if(!isValidCommand(receiver,command)) {
-
-        console.log("command invalid");
+function sendCommand(receiver, command, payload = null) {
+    if (!isValidCommand(receiver, command)) {
+        console.log("command invalid", receiver, command);
         return;
     }
-
 
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-        console.log("WebSocket is not connected");
-
-        document.getElementById("robot_command_status").innerText =
-            "WebSocket is not connected";
-
+        setText("robot_command_status", "WebSocket is not connected");
         return;
     }
 
-    const outgoing = {
-        receiver: receiver,
-        command: command,
-        payload: payload
-    };
-
-    socket.send(JSON.stringify(outgoing));
+    socket.send(JSON.stringify({ receiver: receiver, command: command, payload: payload }));
 }
 
 function isValidCommand(receiver, command) {
-
     if (!Object.values(Receiver).includes(receiver)) {
         throw new Error(`Invalid receiver: ${receiver}`);
     }
-    
     const commands = ReceiverCommands[receiver];
-
-    if (!commands) {
-        return false;
-    }
-
+    if (!commands) return false;
     return Object.values(commands).includes(command);
 }
-
-/*
-function sendRobotCommand(command) {
-    console.log("Sending command:", command);
-
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-        console.log("WebSocket is not connected");
-
-        document.getElementById("robot_command_status").innerText =
-            "WebSocket is not connected";
-
-        return;
-    }
-
-    const payload = {
-        command: command
-    };
-
-    socket.send(JSON.stringify(payload));
-}
-
-function sendRobotCommandWithValue(command, commandValue) {
-    console.log("Sending command:", command);
-    console.log("Command value:", commandValue);
-
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-        console.log("WebSocket is not connected");
-
-        document.getElementById("robot_command_status").innerText =
-            "WebSocket is not connected";
-
-        return;
-    }
-
-    const payload = {
-        command: command,
-        value: commandValue
-    };
-
-    socket.send(JSON.stringify(payload));
-}
-
-*/
 
 window.sendCommand = sendCommand;
 window.Receiver = Receiver;
@@ -319,66 +509,12 @@ window.VisionCommands = VisionCommands;
 window.CobotCommands = CobotCommands;
 window.CameraCommands = CameraCommands;
 
-let speedCommandTimer = null;
-let lastSentSpeedLevel = null;
-
-const SPEED_COMMAND_DELAY_MS = 1500;
-
-function getSpeedLabel(speedLevel) {
-    const speedLabels = {
-        1: "Slow",
-        2: "Medium",
-        3: "Fast",
-        4: "Max"
-    };
-
-    return speedLabels[speedLevel] || "Unknown";
-}
-
-function updateSpeedDisplay() {
-    const slider = document.getElementById("cobot_speed_slider");
-    const speedLevel = parseInt(slider.value);
-
-    document.getElementById("cobot_speed_status").innerText =
-        "Selected speed: " + getSpeedLabel(speedLevel) + " - waiting...";
-}
-
-function handleSpeedSliderInput() {
-    updateSpeedDisplay();
-
-    if (speedCommandTimer !== null) {
-        clearTimeout(speedCommandTimer);
-    }
-
-    speedCommandTimer = setTimeout(function () {
-        sendSpeedCommand();
-    }, SPEED_COMMAND_DELAY_MS);
-}
-
-function sendSpeedCommand() {
-    const slider = document.getElementById("cobot_speed_slider");
-    const speedLevel = parseInt(slider.value);
-
-    if (speedLevel === lastSentSpeedLevel) {
-        document.getElementById("cobot_speed_status").innerText =
-            "Selected speed: " + getSpeedLabel(speedLevel) + " - already sent";
-        return;
-    }
-
-    lastSentSpeedLevel = speedLevel;
-
-    document.getElementById("cobot_speed_status").innerText =
-        "Selected speed: " + getSpeedLabel(speedLevel) + " - sent";
-
-    sendRobotCommandWithValue("set_cobot_speed", speedLevel);
-}
-
 connectWebSocket();
-loadConfig();
+renderPickMonitor();
 
 // TEMPORARY manual centre select — wire the color feed once at load.
-const colorFeed = document.getElementById("rgb_image");
-if (colorFeed) colorFeed.addEventListener("click", handleColorFeedClick);
-
-
-
+const colorFeed = byId("rgb_image");
+if (colorFeed) {
+    colorFeed.addEventListener("click", handleColorFeedClick);
+    colorFeed.addEventListener("load", drawOverlay);
+}

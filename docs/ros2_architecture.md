@@ -39,9 +39,11 @@ Three payload shapes cross the queues: scalars (UI), `DualFrame` (two numpy imag
 
 Six nodes plus a bringup package. Design decisions locked in:
 
-- **Cobot stays Python + pybind** — no C++ ROS node; `motoman_cpp` is imported exactly as today.
+- **The cobot is two nodes** — `cobot_control` (C++, the only YMConnect link: hardware
+  primitives, 10 Hz state poll, pause / cancel) and `cobot_operation` (Python choreography).
+  The pybind extension `motoman_cpp` is retired (§7).
 - **Vision splits into two nodes** — ML (YOLO) and geometry (localization) are separate.
-- **A task manager owns the state machine** (§11) — cobot_node is a motion action server;
+- **A task manager owns the state machine** (§11) — the cobot nodes are action servers;
   nothing moves because a topic was published. `/vision/targets` is data, not a trigger.
 - **All frames flow as topics** — vision *and* the web UI subscribe to the same camera streams.
 
@@ -60,8 +62,9 @@ Six nodes plus a bringup package. Design decisions locked in:
                     │◀──────── /task/status + /task/layer_report ──┤ │
                     │                              /vision/scan ◀──┘ │ (+ calibration srvs)
                     │                                                ▼
-                    │              PickCan / MoveToPose actions ──▶ cobot_node ─▶ motoman_cpp
-                    │◀────────────────────────── /cobot/status ─────┘   (hardware status)
+                    │              PickCan action ──▶ cobot_operation ─▶ cobot_control ─▶ robot
+                    │              MoveToPose action ───────────────────▶ (YMConnect)
+                    │◀──────────── /cobot/status (latched) + /cobot/state (10 Hz) ─┘
 ```
 
 ### Workspace layout
@@ -71,15 +74,16 @@ ros2_ws/src/
 ├── cobot_interfaces/      # msgs/srvs/actions only — depends on nothing local
 ├── cobot_camera/          # ament_python: camera_streamer.py + camera_node
 ├── cobot_vision/          # ament_python: yolo_node + localization_node (two executables)
-├── motoman_cpp/           # ament_cmake: pybind11 module + libYMConnect (see §7)
-├── cobot_control/         # ament_python: cobot.py + cobot_node (imports motoman_cpp)
+├── cobot_control/         # ament_cmake: C++ node on YMConnect, SDK vendored in third_party/ (§7)
+├── cobot_operation/       # ament_python: pick choreography (PickCan) over cobot_control primitives
+├── motoman_cpp/           # RETIRED pybind11 module (COLCON_IGNORE) + old Python cobot node
 ├── cobot_tasks/           # ament_python: task_manager — state machine + sequencing (§11)
 ├── cobot_web/             # ament_python: FastAPI app + web_node
 └── cobot_bringup/         # launch files + config YAMLs
 ```
 
 Dependency rule: every package depends only on `cobot_interfaces` + standard messages
-(`sensor_msgs`, `std_srvs`). `cobot_control` additionally depends on `motoman_cpp`.
+(`sensor_msgs`, `std_srvs`). `cobot_control` is C++ and links the vendored YMConnect SDK.
 `cobot_tasks` depends on `cobot_interfaces` + rclpy ONLY (§11). Nothing depends on
 `cobot_bringup`.
 
@@ -112,8 +116,8 @@ become publisher calls.
 - Publishes `/vision/detections_px` (`ObbDetectionArray`) — class, confidence, pixel corners,
   pixel center. **Header stamp = the color frame the model ran on.**
 - Pixel-distance duplicate removal (`remove_duplicate_detections`) happens here
-- Takes: `yolo_obb_detector.py`, annotated-image saving. `train_yolo_obb.py` remains an
-  **offline tool**, not a node.
+- Takes: `yolo_obb_detector.py`, annotated-image saving. `train_yolo_obb.py` is an
+  **offline tool** in `vision_workspace/tools/`, not a node.
 - Service `/vision/locate_dot` (`LocateDot`) — finds the red calibration marker with a
   second model (`red_dot_best.pt`), lazy-loaded on first call so normal startup stays fast.
   Accepts either detection head (OBB or axis-aligned boxes). See §10.
@@ -148,23 +152,55 @@ become publisher calls.
 - Calibration math services (`task_manager` drives the robot between calls — see §10):
   - `/vision/calibration_begin` · `/vision/calibration_sample` · `/vision/calibration_compute`
 
-### 3.4 `cobot_node` (pkg `cobot_control`) — motion execution server, Python, pybind
+### 3.4a `cobot_control` (pkg `cobot_control`) — hardware primitives, C++, YMConnect
 
-`cobot.py` and the `motoman_cpp` extension survive intact. The node is the robot arm as a
-service — no decisions, no vision, no task state (those moved to `task_manager`, §11):
+The only process on the YMConnect link. No decisions, no choreography, no task state.
+The SDK wrapper (`motoman_robot.cpp`) has no ROS in it and serialises every SDK call on
+one mutex; the node owns the timers and the move thread.
 
-- Action `/cobot/pick_can` (`PickCan`) — pick + place ONE can; feedback = choreography phase
-  (check / approach / grip / lift / place); cancel honored at phase boundaries, never
-  between grip and lift
-- Action `/cobot/move_to_pose` (`MoveToPose`) — one supervised cartesian move; a cancel is
-  acknowledged after the move settles (no mid-motion stop in the pybind layer)
-- One motion at a time: a goal arriving while another executes is REJECTED (the task
-  manager serializes anyway; the guard makes any other caller safe)
-- Publishes `/cobot/status` (`CobotStatus`) — **hardware/connection status only**
-  (disconnected / idle / busy / error); operational state lives on `/task/status`
-- Execute callbacks run the async choreography via `asyncio.run()` on executor threads
-  (reentrant group), so goal/cancel requests stay serviceable mid-motion — that is what
-  makes native action cancellation work
+- Action `/cobot/move_to_pose` (`MoveToPose`) — one supervised move. Named motion
+  profile from `cobot_setup.yaml` (joint / **linear**, speed, accel/decel, accuracy,
+  tool file) + per-goal overrides; IK reachability pre-check; feedback
+  `progress_percent` / `steps_remaining` / `paused`. **Cancel is immediate** —
+  `MotionStop(true)`, trajectory cleared, goal CANCELED.
+- `/cobot/pause`, `/cobot/resume` (Trigger) — hold the arm in place (`MotionStop(false)`,
+  resumed with `MotionStart()`, the SDK's documented pause) or, with no move in flight,
+  make the next move wait. `pause_uses_hold` switches to the controller HOLD signal.
+- `/cobot/motion_stop` — immediate controlled stop (not an e-stop).
+- Services for every other primitive: `set_output_bit` / `read_io_bit` (by **name** from
+  `cobot_setup.yaml` or raw address), `set_motion_profile`, `get_current_pose`,
+  `get_active_alarms`, `clear_faults`, `clear_trajectory`, `servo_on/off`, `reconnect`,
+  int / position variables. Every response: `success`, `status_code` (0 ok; 1 not
+  connected; else the YMConnect code), `message`.
+- **The 10 Hz poll** (`poll_period_s`) publishes `/cobot/state` (`CobotState`): `ReadState`
+  (servo / hold / alarm / erroring / Teach-Play-Remote), one `ReadByte` per distinct IO group
+  so every named sensor and output costs one round-trip, the current TCP pose, active
+  alarms while alarming, `poll_ms`. The move loop consumes this instead of polling the
+  controller itself. The same timer is the reconnect loop.
+- One motion at a time: a goal arriving while another executes is REJECTED, as is any goal
+  while alarming, servos off or in Teach mode.
+- Publishes `/cobot/status` (`CobotStatus`, latched) on transitions — hardware status only.
+- Threading: `MultiThreadedExecutor`; poll timer (exclusive group), services + action
+  (reentrant group), one `std::thread` per executing move (joined before the next).
+
+### 3.4b `cobot_operation` (pkg `cobot_operation`) — pick choreography, Python
+
+`rclpy` + `cobot_interfaces` only — never imports robot code. Owns what the legacy
+`cobot.py` owned above the hardware line: the phase order, tool profiles
+(`cobot_setup.yaml` `tools`), teach-point trajectories, `last_placed`, the report.
+
+- Action `/cobot/pick_can` (`PickCan`) — pick + place ONE can by chaining `MoveToPose`,
+  `set_output_bit` and `/cobot/state` sensor reads; feedback = phase; the result carries the
+  full report (`jobs[]`, `sensor_asserts[]`, `phase`). **Cancel is immediate**: the in-flight
+  `MoveToPose` is canceled (controller stop) and the choreography returns at its next
+  boundary — the can may still be gripped.
+- Pause: `cobot_control`'s `/cobot/pause` holds the arm; the choreography sees
+  `CobotState.paused` and waits before its next primitive. One service pauses both layers.
+- Execute callback is a coroutine awaiting the client futures (one reentrant group on a
+  `MultiThreadedExecutor`) — no thread is parked, so goal / cancel stay serviceable.
+- The choreography runs against a `Primitives` protocol; `test/test_choreography.py`
+  drives it with a fake (phase order, abort points, place selection, gating).
+
 
 ### 3.5 `task_manager` (pkg `cobot_tasks`) — state machine + sequencing
 
@@ -292,7 +328,7 @@ camera_node:
 
 yolo_node:
   ros__parameters:
-    model_path: "/ws/vision_workspace/models/cans_obb_best.pt"
+    model_path: "/ws/vision_workspace/weights/cans_obb_best.pt"
     confidence: 0.50
     iou: 0.4
     max_detections: 20
@@ -310,7 +346,7 @@ localization_node:
     can_height_mm: 87.0
     marker_offset_mm: [0.0, 0.0, 0.0]   # red dot off the toolhead point (§10)
 
-cobot_node:
+cobot_control:
   ros__parameters:
     robot_ip: "192.168.1.31"
     tool_offset_mm: [0.0, 0.0, 0.0]     # tool TIP off the toolhead point (§10)
@@ -349,26 +385,33 @@ Bonus: `ros2 param set /yolo_node confidence 0.7` works from any terminal, typed
 
 ---
 
-## 7. The pybind module inside colcon
+## 7. The YMConnect SDK inside colcon
 
-The pybind wrapper structure survives intact as a small `ament_cmake` package
-(`motoman_cpp`), reusing the existing `cpp/CMakeLists.txt` content. Two changes only:
+`cobot_control` is an `ament_cmake` package that vendors the SDK
+(`third_party/YMConnect/{YMConnect.h, libYMConnect.so}`, moved with history from
+`motoman_cpp`) as an IMPORTED shared library. `libYMConnect.so` is installed next to
+`cobot_control_node` (`lib/cobot_control/`) and resolved through an `$ORIGIN` RPATH — the
+same trick the pybind build used, now for an executable. `yaml-cpp` reads
+`cobot_setup.yaml`.
 
-1. **Install destination instead of source-tree output.** Replace
-   `LIBRARY_OUTPUT_DIRECTORY … python/cobot_application/cobot` with
-   `install(TARGETS motoman_cpp DESTINATION ${PYTHON_INSTALL_DIR})`, and install
-   `libYMConnect.so` beside it. The `$ORIGIN` RPATH and the copy trick carry over
-   unchanged; the destination is the colcon `install/` tree, which lands on `PYTHONPATH`
-   when the workspace is sourced. No more build artifacts written into source.
-2. **pybind11 from a package** — Humble ships `pybind11_vendor` (or apt `pybind11-dev`),
-   allowing the vendored `cpp/third_party/pybind` submodule to be dropped. Keeping the
-   vendored copy also works.
+The pybind module `motoman_cpp` is **retired, not deleted**: the package directory carries a
+`COLCON_IGNORE`, its CMake points at the SDK and wrapper sources in `cobot_control`, and the
+old Python `cobot_control.py` / `cobot.py` live under `motoman_cpp/retired_python/`. Delete the
+`COLCON_IGNORE` to build the module for the standalone scripts in `vision_workspace/tests/`.
 
-`cobot_control` declares `<depend>motoman_cpp</depend>`; colcon guarantees build order.
-Import becomes top-level (`import motoman_cpp`) instead of
-`from cobot_application.cobot import motoman_cpp` — a one-line change in `cobot.py`.
+What the port changed versus the pybind wrapper (all in `motoman_robot.cpp`):
+
+- no watchdog thread (the node's poll timer supervises the link); no `std::any`; no `std::cout`
+- `OpenConnection` result checked before use; every call goes through a lock + null check
+- IO reads say which `IOType` they read (the old `read_general_output_bit` read inputs)
+- joint vs linear moves via the SDK's `JointMotion` / `LinearMotion`, so the speed unit
+  always matches the `SpeedType`; accuracy and tool file per profile
+- `ReadState`, `ReadByte`, `ReadPositionData`, `GetActiveAlarms`, `ClearAllFaults`, `SetHold`,
+  `DisplayStringToPendant`, `ConvertPositionFromCartesian` (fixed `IsOk` inversion) are used
+- `MotionStop(false)` + `MotionStart()` implement pause / resume
 
 ---
+
 
 ## 8. Docker build
 
@@ -415,7 +458,6 @@ WORKDIR /ws
 COPY ros2_ws/src/cobot_interfaces/package.xml   src/cobot_interfaces/package.xml
 COPY ros2_ws/src/cobot_camera/package.xml       src/cobot_camera/package.xml
 COPY ros2_ws/src/cobot_vision/package.xml       src/cobot_vision/package.xml
-COPY ros2_ws/src/motoman_cpp/package.xml        src/motoman_cpp/package.xml
 COPY ros2_ws/src/cobot_control/package.xml      src/cobot_control/package.xml
 COPY ros2_ws/src/cobot_web/package.xml          src/cobot_web/package.xml
 COPY ros2_ws/src/cobot_bringup/package.xml      src/cobot_bringup/package.xml
@@ -519,9 +561,10 @@ an image rebuild.
 | `vision_system/yolo_obb_detector.py` | `cobot_vision` / yolo_node |
 | `vision_system/rotation.py`, `pathing.py` | `cobot_vision` / localization_node |
 | `vision_system/homography.py` | retired — replaced by the fitted 3D calibration (`calibration.py`, §10) |
-| `vision_system/train_yolo_obb.py` | offline tool (not a node) |
-| `cobot/cobot.py`, `cobot_logger.py` | `cobot_control` (import line change only) |
-| `cpp/` pybind sources + YMConnect | `motoman_cpp` ament_cmake package |
+| `vision_system/train_yolo_obb.py` | `vision_workspace/tools/train_yolo_obb.py` (offline tool, dev-PC .venv) |
+| `cobot/cobot.py` choreography | `cobot_operation/choreography.py` (against a `Primitives` protocol) |
+| `cpp/` `MotomanRobot.cpp` + YMConnect | `cobot_control` C++ node (`motoman_robot.cpp`, `third_party/YMConnect`) |
+| `cpp/` pybind bindings | retired in `motoman_cpp/` (`COLCON_IGNORE`) |
 | `web_app/` templates, static, FastAPI routes | `cobot_web` |
 
 Required code changes found during analysis:
@@ -529,7 +572,7 @@ Required code changes found during analysis:
 - `run_YOLO(image, …)` ignores its `image` argument and always reads the inbox folder —
   must actually pass the subscribed frame through.
 - `cobot.py` hardcodes pick z (300/401 mm) — wire measured `real_z` in.
-- `import motoman_cpp` becomes top-level.
+- the ROS graph no longer imports `motoman_cpp`; `cobot_operation` talks to `cobot_control` over actions/services/topics.
 
 ### Code that dies
 
@@ -539,7 +582,7 @@ Required code changes found during analysis:
 | `main.py` | `robot.launch.py` |
 | `web_app/web_server.py` | already-dead earlier draft of `webpage_controller.py` |
 | camera `snapshot`/`get_stream_provider`, vision `convert_to_jpeg` | frame topics |
-| `bin.py` layer heuristics (stale imports, `LAYER_Z` table) | measured depth (§5) + bin state in `cobot_node` |
+| `bin.py` layer heuristics (stale imports, `LAYER_Z` table) | measured depth (§5) + bin state in `task_manager` |
 | `Config` shared object | per-node parameters + bringup YAML (§6) |
 
 ---
@@ -611,12 +654,12 @@ in mm along **robot base axes** at the fixed pick/calibration orientation
 | offset | param | owner | applied to |
 |---|---|---|---|
 | red calibration dot | `localization_node.marker_offset_mm` | localization | each calibration sample's ground truth: `commanded_TCP + marker_offset_mm` |
-| end of the tooling | `cobot_node.tool_offset_mm` | `cobot.py` (`ToolOffset`) | vision-derived pick poses: commanded pose = can position − tool offset |
+| end of the tooling | `cobot_setup.yaml` `tools.<name>.tip_offset_mm` | `cobot_operation/geometry.py` (`ToolOffset`) | vision-derived pick poses: commanded pose = can position − tool offset |
 
 The marker offset is applied by localization **before** fitting and is never absorbed
 into the fit — the transform must localize cans, not tool flanges. Because it is
 accounted for during the fit, `/vision/targets` coordinates are true robot-base
-positions of the **can**; `cobot_node` then subtracts its own tool offset so the tool
+positions of the **can**; `cobot_operation` then subtracts its own tool offset so the tool
 *tip* is what lands there. The XY part rotates with the commanded `rz` (the offset is
 measured at `rz = 0`); Z does not, since `rx`/`ry` are fixed.
 
@@ -634,8 +677,8 @@ re-measure them if you set one.
 
 | | owner | does |
 |---|---|---|
-| `/task/calibrate` | `task_manager` | pose grid from params, sequences the run (holds the one-task lock), sends one `MoveToPose` goal per pose to `cobot_node`, reports progress on `/task/status` (`calibrating`), stop cancels the active move |
-| `/cobot/move_to_pose` | `cobot_node` | executes each grid move (the only node touching motoman) |
+| `/task/calibrate` | `task_manager` | pose grid from params, sequences the run (holds the one-task lock), sends one `MoveToPose` goal per pose to `cobot_control`, reports progress on `/task/status` (`calibrating`), stop cancels the active move |
+| `/cobot/move_to_pose` | `cobot_control` | executes each grid move (the only node touching the robot) |
 | `/vision/calibration_begin` | `localization_node` | clears the sample buffer, warms the red-dot model |
 | `/vision/calibration_sample` | `localization_node` | "marker parked at TCP (x,y,z), measure now": N `locate_dot` reads → median (u,v), median-window depth from its own buffer, add marker offset, store the pair |
 | `/vision/calibration_compute` | `localization_node` | mode-select (extrinsic if intrinsics known, else full) → validate RMS → write `calibration.yaml` → hot-swap the live transform |
@@ -664,7 +707,7 @@ Prerequisites before running a calibration (all parameters):
 - `task_manager.calibration_{x,y}_range_mm`, `calibration_z_levels_mm` — safe, reachable,
   in-frame bounds; `[0,0]` means unconfigured and `/task/calibrate` refuses
 - `localization_node.marker_offset_mm` — measured with a ruler after mounting the dot
-  (and `cobot_node.tool_offset_mm` for the tooling — same reference point, §10.2)
+  (and `tools.<name>.tip_offset_mm` in `cobot_setup.yaml` for the tooling — same reference point, §10.2)
 - `yolo_node.dot_model_path` — `red_dot_best.pt` in the models mount
 - Camera intrinsics available: the streamer writes `intrinsics_file` (color intrinsics,
   depth→color alignment ON), relayed as `/camera/color/camera_info`. With
@@ -711,16 +754,16 @@ To remove: drop the flag, all three topics, `handle_web_command`'s `click_center
 ## 11. Task manager — state machine + sequencing (`cobot_tasks`)
 
 Why it exists: in the first migration draft, `/vision/targets` being *published* was what
-*triggered* picking (cobot_node subscribed and immediately ran the layer). A data topic
+*triggered* picking (cobot_control subscribed and immediately ran the layer). A data topic
 doubling as a command is fragile. The task manager makes "what should happen next" an
-explicit, single-owner decision, and turns cobot_node into a dumb, reliable motion server.
+explicit, single-owner decision, and turns cobot_control into a dumb, reliable motion server.
 
 **Ownership rule** — mirrors the calibration split (§10.3), one row per node:
 
 | node | owns | never does |
 |---|---|---|
 | `task_manager` | state machine, task loops, gating, progress | geometry math, motoman/camera access |
-| `cobot_node` | motion execution (actions) | decisions, vision calls, task state |
+| `cobot_control` | motion execution (actions) | decisions, vision calls, task state |
 | `localization_node` | geometry + calibration math | robot commands |
 | `yolo_node` | ML inference | geometry, robot commands |
 
@@ -765,3 +808,50 @@ haven't arrived; a failed fit keeps the previously saved transform. The full-gri
 
 Bin-cycle state (layer index, `BIN_COMPLETE`, tier-1 rescan decisions — §5) belongs here
 when it gets wired in: it is sequencing state, not perception or motion state.
+
+## 12. System health + pick monitor (`cobot_health`)
+
+**Heartbeats.** Every node embeds `cobot_health.heartbeat.HeartbeatPublisher`
+and publishes one `Heartbeat` on `/health/heartbeat` every
+`heartbeat_period_s` (default 2 s): `level` (OK / WARN / ERROR), a one-line
+`detail`, and string `KeyValue[] metrics`. The report callback only reads
+cached values and runs in its own callback group, so it never blocks and is
+never starved by a long handler (localization's 120 s calibration waits).
+
+| node | level rule | key metrics |
+|---|---|---|
+| `camera_node` | color and depth judged **identically**: ERROR if either never delivered or `age > 2 s`; WARN if either < 50 % of `publish_rate_hz` | `color_hz`, `depth_hz`, `*_age_s`, `*_dropped` (ZMQ index gaps), `intrinsics_published` |
+| `yolo_node` | WARN color frame stale | `scan_in_flight`, `last_scan_ms`, `last_detection_count`, `dot_model_loaded` |
+| `localization_node` | ERROR not calibrated; WARN depth stale / no intrinsics | `calibrated`, `rms_*_mm`, `depth_buffer_age_s`, `manual_click_waiting` |
+| `cobot_control` | ERROR not connected / alarming, WARN servos off | `connected`, `busy`, `paused`, `servo_on`, `alarming`, `poll_ms` |
+| `cobot_operation` | ERROR primitives missing / robot disconnected | `primitives_ready`, `busy`, `paused`, `last_placed`, `active_tool` |
+| `task_manager` | WARN robot unavailable / task error | `state`, `progress`, `verify_ready`, `pick_ready` |
+| `web_node` | — | `ws_clients`, `stream_hz_actual` |
+
+`cobot_control`'s 10 Hz poll mirrors a link change
+into `/cobot/status` (DISCONNECTED / IDLE), which task_manager already
+mirrors into `/task/status` — a mid-session link loss is no longer invisible.
+
+**health_monitor node** subscribes `/health/heartbeat`, and publishes a
+latched `HealthSummary` on `/health/summary` at 1 Hz: per expected node
+(`expected_nodes` param) UNKNOWN if never seen, STALE if silent for
+`stale_factor × period_s`, else the node's own level; unexpected publishers
+are appended. Level transitions are logged once. `web_node` forwards the
+summary to the browser as `{"type": "health"}` (age computed from the header
+stamp because the topic is latched); the dashboard flags the monitor itself
+as offline if no summary arrives for 3.5 s.
+
+**Pick monitor.** `task_manager` publishes one `PickEvent` on
+`/task/pick_event` per `PickCan` attempt with `outcome`
+(picked / failed / skipped) and — the "second depth scan" — the result of
+calling `/vision/verify_target` after a successful pick (`verify_ran`,
+`verified = not present`, `measured_z`). `CanTarget.detection_index` (set by
+localization) links each event back to the scan's `ObbDetectionArray` entry
+so the browser recolors the right box on the color-feed overlay. The verdict
+is reported only; it does not yet gate the layer report or trigger a rescan
+(§5), and the UI's `USE_VERIFY_GATE` flag in `app.js` keeps the strict
+coloring off until the check is trusted on the real cell.
+
+Dependency note: `cobot_tasks` may depend on `cobot_health` — it is itself
+rclpy + `cobot_interfaces` only and carries no geometry/robot/camera code, so
+the §11 god-node rule is preserved.

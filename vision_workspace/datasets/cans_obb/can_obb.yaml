@@ -1,4 +1,3 @@
-path: /app/vision_workspace/datasets/cans_obb
 train: images/train
 val: images/val
 

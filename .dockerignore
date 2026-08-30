@@ -19,7 +19,7 @@ ros2_ws/install/
 ros2_ws/log/
 build/
 
-# --- Legacy application + old C++ tree (motoman_cpp package has its own copy) ---
+# --- Legacy application + old C++ tree (cobot_control/third_party has the YMConnect copy) ---
 legacy/
 cpp/
 app/

@@ -1,0 +1,6 @@
+uint16 index
+---
+bool success
+int32 value
+int32 status_code
+string message

@@ -46,6 +46,11 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_srvs.srv import Trigger
 
 from cobot_camera.camera_streamer import CameraStream, Frame
+from cobot_health.heartbeat import HeartbeatPublisher, RateMeter
+from cobot_interfaces.msg import Heartbeat
+
+# A stream older than this is reported as ERROR in the heartbeat.
+STREAM_STALE_SEC = 2.0
 
 
 SENSOR_QOS = QoSProfile(
@@ -108,9 +113,18 @@ class CameraNode(Node):
         # on the executor thread and gives a natural throttle parameter.
         self._last_color_index = -1
         self._last_depth_index = -1
+        self._publish_rate_hz = float(publish_rate_hz)
+        # Health: color and depth are measured independently and judged
+        # identically — a dead depth stream is as fatal as a dead color one.
+        self._color_rate = RateMeter()
+        self._depth_rate = RateMeter()
+        self._color_dropped = 0
+        self._depth_dropped = 0
         self.create_timer(1.0 / publish_rate_hz, self._publish_latest)
 
         self.create_service(Trigger, "/camera/save_frames", self._on_save_frames)
+
+        self._hb = HeartbeatPublisher(self, self._health_report)
 
     def _publish_intrinsics(self):
         """Relay the streamer's intrinsics JSON as a latched CameraInfo.
@@ -166,13 +180,61 @@ class CameraNode(Node):
             msg = self._frame_to_image(color, encoding="rgb8", frame_id=self._color_frame_id)
             msg.header.stamp = now
             self._color_pub.publish(msg)
+            if self._last_color_index >= 0 and color.index > self._last_color_index + 1:
+                self._color_dropped += color.index - self._last_color_index - 1
             self._last_color_index = color.index
+            self._color_rate.tick()
 
         if depth is not None and depth.index != self._last_depth_index:
             msg = self._frame_to_image(depth, encoding="16SC1", frame_id=self._depth_frame_id)
             msg.header.stamp = now
             self._depth_pub.publish(msg)
+            if self._last_depth_index >= 0 and depth.index > self._last_depth_index + 1:
+                self._depth_dropped += depth.index - self._last_depth_index - 1
             self._last_depth_index = depth.index
+            self._depth_rate.tick()
+
+    # ------------------------------------------------------------------
+    # Health
+    # ------------------------------------------------------------------
+
+    def _health_report(self):
+        """Both streams judged by the same rule; the worse one sets the level."""
+        color_hz, color_age = self._color_rate.read()
+        depth_hz, depth_age = self._depth_rate.read()
+
+        problems = []
+        level = Heartbeat.LEVEL_OK
+        for name, hz, age in (("color", color_hz, color_age), ("depth", depth_hz, depth_age)):
+            if age is None:
+                level = Heartbeat.LEVEL_ERROR
+                problems.append(f"{name}: no frames yet")
+            elif age > STREAM_STALE_SEC:
+                level = Heartbeat.LEVEL_ERROR
+                problems.append(f"{name} stalled {age:.1f}s")
+            elif hz < 0.5 * self._publish_rate_hz:
+                level = max(level, Heartbeat.LEVEL_WARN)
+                problems.append(f"{name} slow {hz:.1f} Hz")
+
+        if problems:
+            detail = " · ".join(problems)
+        else:
+            detail = f"color {color_hz:.1f} Hz · depth {depth_hz:.1f} Hz"
+
+        return level, detail, {
+            "color_hz": color_hz,
+            "depth_hz": depth_hz,
+            "color_age_s": color_age,
+            "depth_age_s": depth_age,
+            "color_frames": self._color_rate.total,
+            "depth_frames": self._depth_rate.total,
+            "color_dropped": self._color_dropped,
+            "depth_dropped": self._depth_dropped,
+            "color_last_index": self._last_color_index,
+            "depth_last_index": self._last_depth_index,
+            "publish_rate_hz": self._publish_rate_hz,
+            "intrinsics_published": self._intrinsics_mtime is not None,
+        }
 
     def _on_save_frames(self, request, response):
         """Write the freshest color+depth pair to capture_dir.

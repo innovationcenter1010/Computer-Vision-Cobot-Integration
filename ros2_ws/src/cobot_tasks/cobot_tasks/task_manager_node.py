@@ -14,14 +14,19 @@ this node only decides, gates and reports.
                                           into /task/status when no task runs
   out: /task/status (TaskStatus, latched) — THE operational state
        /task/layer_report (LayerReport)
+       /task/pick_event (PickEvent)      — one per can: outcome + post-pick
+                                          depth verification ("second depth
+                                          scan" via /vision/verify_target)
   calls:
        /cobot/pick_can      (PickCan action)     one can per goal
        /cobot/move_to_pose  (MoveToPose action)  calibration grid moves
        /vision/scan, /vision/calibration_begin|sample|compute  (services)
 
 Dependency rule (docs/ros2_architecture.md §11): rclpy + cobot_interfaces
-ONLY. If this node ever computes geometry or imports anything robot- or
-camera-facing, it has become a god-node — reject the change.
+ONLY (plus cobot_health, which is itself rclpy + cobot_interfaces only and
+carries no geometry/robot/camera code). If this node ever computes geometry
+or imports anything robot- or camera-facing, it has become a god-node —
+reject the change.
 
 Threading model: tasks run in one background worker thread, one at a time
 (_operation_lock, held for the whole task). Trigger services live in their
@@ -45,8 +50,17 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 from std_srvs.srv import Trigger
 
 from cobot_interfaces.action import MoveToPose, PickCan
-from cobot_interfaces.msg import CanTargetArray, CobotStatus, LayerReport, TaskStatus
-from cobot_interfaces.srv import CalibrationSample
+from cobot_interfaces.msg import (
+    CanTargetArray,
+    CobotStatus,
+    Heartbeat,
+    LayerReport,
+    PickEvent,
+    TaskStatus,
+)
+from cobot_interfaces.srv import CalibrationSample, VerifyTarget
+
+from cobot_health.heartbeat import HeartbeatPublisher
 
 
 LATCHED_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -57,6 +71,24 @@ MOVE_TIMEOUT_SEC = 120.0        # one calibration grid move
 # calibration_begin lazy-loads the red-dot model on the vision side.
 CAL_BEGIN_TIMEOUT_SEC = 120.0
 CAL_COMPUTE_TIMEOUT_SEC = 60.0
+# Post-pick depth verification ("second depth scan"): cheap, no ML.
+VERIFY_TIMEOUT_SEC = 5.0
+
+TASK_STATE_NAMES = {
+    TaskStatus.STATE_DISCONNECTED: "disconnected",
+    TaskStatus.STATE_IDLE: "idle",
+    TaskStatus.STATE_SCANNING: "scanning",
+    TaskStatus.STATE_PICKING: "picking",
+    TaskStatus.STATE_CALIBRATING: "calibrating",
+    TaskStatus.STATE_STOPPING: "stopping",
+    TaskStatus.STATE_ERROR: "error",
+}
+COBOT_STATE_NAMES = {
+    CobotStatus.STATE_DISCONNECTED: "disconnected",
+    CobotStatus.STATE_IDLE: "idle",
+    CobotStatus.STATE_BUSY: "busy",
+    CobotStatus.STATE_ERROR: "error",
+}
 
 
 class TaskManagerNode(Node):
@@ -92,6 +124,12 @@ class TaskManagerNode(Node):
 
         self._status_pub = self.create_publisher(TaskStatus, "/task/status", LATCHED_QOS)
         self._report_pub = self.create_publisher(LayerReport, "/task/layer_report", 10)
+        self._pick_event_pub = self.create_publisher(PickEvent, "/task/pick_event", 10)
+
+        # Last published TaskStatus fields, for the heartbeat (one tuple = atomic).
+        self._last_status: tuple[int, str, str, int, int] = (
+            TaskStatus.STATE_DISCONNECTED, "", "", 0, 0
+        )
 
         self._operation_lock = threading.Lock()  # one task at a time
         self._operation_thread: threading.Thread | None = None
@@ -129,6 +167,7 @@ class TaskManagerNode(Node):
             CalibrationSample, "/vision/calibration_sample"
         )
         self._cal_compute_client = self.create_client(Trigger, "/vision/calibration_compute")
+        self._verify_client = self.create_client(VerifyTarget, "/vision/verify_target")
 
         self._publish_status(
             TaskStatus.STATE_DISCONNECTED, "waiting for /cobot/status from cobot_node"
@@ -138,6 +177,8 @@ class TaskManagerNode(Node):
         # for the robot and services, then runs the small extrinsic grid once.
         if self.get_parameter("auto_calibrate_on_startup").value:
             threading.Thread(target=self._run_startup_calibration, daemon=True).start()
+
+        self._hb = HeartbeatPublisher(self, self._health_report)
 
     # ------------------------------------------------------------------
     # Status helpers
@@ -158,7 +199,36 @@ class TaskManagerNode(Node):
         msg.active_task = active_task
         msg.progress_current = int(current)
         msg.progress_total = int(total)
+        self._last_status = (state, detail, active_task, int(current), int(total))
         self._status_pub.publish(msg)
+
+    def _health_report(self):
+        state, detail, active_task, current, total = self._last_status
+        robot = self._robot_state
+        state_name = TASK_STATE_NAMES.get(state, "unknown")
+        level = Heartbeat.LEVEL_OK
+        if robot is None or robot in (CobotStatus.STATE_DISCONNECTED, CobotStatus.STATE_ERROR):
+            level = Heartbeat.LEVEL_WARN
+        if state == TaskStatus.STATE_ERROR:
+            level = Heartbeat.LEVEL_WARN
+        summary = state_name
+        if active_task:
+            summary += f" · {active_task}"
+            if total:
+                summary += f" {current}/{total}"
+        elif detail:
+            summary += f" · {detail}"
+        return level, summary, {
+            "state": state_name,
+            "active_task": active_task or None,
+            "progress": f"{current}/{total}" if total else None,
+            "robot_state": None if robot is None else COBOT_STATE_NAMES.get(robot, "unknown"),
+            "operation_running": self._operation_lock.locked(),
+            "stop_requested": self._stop_requested.is_set(),
+            "scan_ready": self._scan_client.service_is_ready(),
+            "verify_ready": self._verify_client.service_is_ready(),
+            "pick_ready": self._pick_client.server_is_ready(),
+        }
 
     def _robot_available(self) -> tuple[bool, str]:
         if self._robot_state is None:
@@ -415,6 +485,8 @@ class TaskManagerNode(Node):
                     report.overall_ok = False
                     self.get_logger().warn(f"pick {index + 1} failed: {result.message}")
 
+                self._publish_pick_event(index + 1, len(targets), can, result)
+
             report.header.stamp = self.get_clock().now().to_msg()
             self._report_pub.publish(report)
             self._publish_status(
@@ -430,6 +502,54 @@ class TaskManagerNode(Node):
             with self._targets_lock:
                 self._awaiting_targets = False
             self._operation_lock.release()
+
+    def _publish_pick_event(self, index: int, total: int, can, result):
+        """Report one can's outcome, then run the post-pick depth check.
+
+        The "second depth scan" asks localization whether a can is STILL at
+        the target: present == False confirms the pick. The verdict is
+        reported on /task/pick_event only — it does not (yet) gate the
+        layer report or trigger a rescan; the UI keeps that decision behind
+        a flag until the check is trusted on the real cell.
+        """
+        event = PickEvent()
+        event.index = int(index)
+        event.total = int(total)
+        event.target = can
+        event.detection_index = int(can.detection_index)
+        event.measured_z = -1.0
+        event.message = result.message
+        if result.success:
+            event.outcome = PickEvent.OUTCOME_PICKED
+        elif self._stop_requested.is_set():
+            event.outcome = PickEvent.OUTCOME_SKIPPED
+        else:
+            event.outcome = PickEvent.OUTCOME_FAILED
+
+        if result.success:
+            if not self._verify_client.service_is_ready():
+                event.message += " (verify_target unavailable)"
+            else:
+                try:
+                    verify = self._call(
+                        self._verify_client, VerifyTarget.Request(target=can), VERIFY_TIMEOUT_SEC
+                    )
+                    event.verify_ran = True
+                    event.verified = not verify.present
+                    event.measured_z = float(verify.measured_z)
+                    if verify.present:
+                        event.message += " (WARNING: depth still shows a can at the target)"
+                        self.get_logger().warn(
+                            f"pick {index}: verify_target says the can is still present "
+                            f"(measured z {verify.measured_z:.1f} mm)"
+                        )
+                except TimeoutError as e:
+                    event.message += f" (verify timed out: {e})"
+                except Exception as e:  # noqa: BLE001 — verification must never break the loop
+                    event.message += f" (verify failed: {e})"
+
+        event.header.stamp = self.get_clock().now().to_msg()
+        self._pick_event_pub.publish(event)
 
     # ------------------------------------------------------------------
     # Task: calibration (movement loop here, math in localization_node)

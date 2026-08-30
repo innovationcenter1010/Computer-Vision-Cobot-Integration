@@ -1,0 +1,5 @@
+---
+bool success
+Alarm[] alarms
+int32 status_code
+string message

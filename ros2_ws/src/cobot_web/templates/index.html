@@ -1,22 +1,36 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Cobot Control Panel</title>
-    <link rel="stylesheet" href="/static/style.css?v=9">
+    <link rel="stylesheet" href="/static/style.css?v=10">
 </head>
 
 <body>
-    <main class="page">
-        <h1>Cobot Control Panel</h1>
+    <header class="topbar">
+        <div class="brand"><span class="mark">CB</span>Cobot Control Panel</div>
+        <span id="ws_status" class="pill pill-neutral"><span class="dot"></span>connecting…</span>
+        <div class="spacer"></div>
+        <span class="eyebrow">System</span>
+        <span id="overall_health" class="pill lvl-unknown"><span class="dot"></span>waiting for health monitor</span>
+    </header>
 
+    <main class="page">
         <div class="dashboard-grid">
 
+            <!-- ===================== live feed ===================== -->
             <section class="card feed-card">
-                <div class="image-header">
-                    <h2>Live Camera Feed</h2>
-                    <p id="stream_status" class="stream-status">waiting for frames&hellip;</p>
-
-                    <button type="button" onclick="sendCommand(Receiver.CAMERA,CameraCommands.SAVE)" class="refresh-button">
+                <div class="card-head">
+                    <h2>Live Feed</h2>
+                    <span id="stream_status" class="pill pill-neutral"><span class="dot"></span>waiting for frames…</span>
+                    <div class="spacer"></div>
+                    <button type="button" class="btn ghost sm"
+                            onclick="sendCommand(Receiver.VISION, VisionCommands.DETECT)">
+                        Scan (display only)
+                    </button>
+                    <button type="button" class="btn ghost sm"
+                            onclick="sendCommand(Receiver.CAMERA, CameraCommands.SAVE)">
                         Save Images
                     </button>
                 </div>
@@ -25,86 +39,97 @@
                      is waiting for the calibration marker to be clicked. -->
                 <div id="marker_click_prompt" class="marker-prompt" style="display: none;">
                     <span>Click the centre of the calibration marker on the color feed.</span>
-                    <button type="button" onclick="skipMarkerPose()" class="marker-skip">
+                    <button type="button" onclick="skipMarkerPose()" class="btn sm marker-skip">
                         Marker not in frame — skip pose
                     </button>
                 </div>
 
                 <div class="vision-grid">
-                    <div class="vision-item">
-                        <h3>Color</h3>
-                        <img id="rgb_image" alt="No color frames yet">
+                    <div class="feed">
+                        <div class="feed-label">
+                            <span class="eyebrow">Color</span>
+                            <span id="color_meta" class="mono"></span>
+                        </div>
+                        <div class="frame">
+                            <img id="rgb_image" alt="No color frames yet">
+                            <canvas id="rgb_overlay" class="overlay"></canvas>
+                        </div>
                     </div>
 
-                    <div class="vision-item">
-                        <h3>Depth</h3>
-                        <img id="depth_image" alt="No depth frames yet">
-                    </div>
-                </div>
-            </section>
-
-            <section class="card robot-card">
-                <h2>Robot Commands</h2>
-
-                <button type="button" onclick="sendCommand(Receiver.COBOT,CobotCommands.START)" class="start">
-                    Start
-                </button>
-
-                <button type="button" onclick="sendCommand(Receiver.COBOT,CobotCommands.CALIBRATE)" class="start">
-                    Calibrate
-                </button>
-
-                <button type="button" onclick="sendCommand(Receiver.COBOT,CobotCommands.STOP)" class="danger">
-                    Stop
-                </button>
-
-                <p id="robot_command_status"></p>
-
-
-                <div class="speed-control">
-                    <h3>Cobot Speed</h3>
-
-                    <input
-                        id="cobot_speed_slider"
-                        type="range"
-                        min="1"
-                        max="4"
-                        step="1"
-                        value="2"
-                        oninput="handleSpeedSliderInput()"
-                    >
-
-                    <div class="speed-labels">
-                        <span>Slow</span>
-                        <span>Medium</span>
-                        <span>Fast</span>
-                        <span>Max</span>
-                    </div>
-
-                <div class="feedback-section">
-                    <h3>Cobot Feedback</h3>
-
-                    <div id="cobot_feedback_box" class="feedback-box">
-                        <p id="cobot_feedback">No cobot messages yet.</p>
+                    <div class="feed">
+                        <div class="feed-label">
+                            <span class="eyebrow">Depth</span>
+                            <span id="depth_meta" class="mono"></span>
+                        </div>
+                        <div class="frame">
+                            <img id="depth_image" alt="No depth frames yet">
+                        </div>
                     </div>
                 </div>
             </section>
 
-            <section class="card image-card">
-                <div class="image-header">
-                    <h2>Latest Vision Image</h2>
+            <!-- ============= left column: control + pick monitor ============= -->
+            <div class="column">
+                <section class="card robot-card">
+                    <div class="card-head"><h2>Robot Control</h2></div>
 
-                    <button type="button" onclick="loadLatestImage()" class="refresh-button">
-                        Refresh Image
-                    </button>
+                    <div class="row">
+                        <button type="button" class="btn"
+                                onclick="sendCommand(Receiver.COBOT, CobotCommands.START)">Start</button>
+                        <button type="button" class="btn ghost"
+                                onclick="sendCommand(Receiver.COBOT, CobotCommands.CALIBRATE)">Calibrate</button>
+                        <button type="button" class="btn danger"
+                                onclick="sendCommand(Receiver.COBOT, CobotCommands.STOP)">Stop</button>
+                    </div>
+                    <p id="robot_command_status" class="status-line"></p>
+
+                    <div class="task">
+                        <div class="state">
+                            <span class="eyebrow">Task</span>
+                            <strong id="task_state">—</strong>
+                            <span id="task_progress" class="pill pill-neutral" style="display:none"></span>
+                        </div>
+                        <div class="progress"><i id="task_bar"></i></div>
+                        <div class="eyebrow">Feedback</div>
+                        <div id="cobot_feedback_box" class="feedback-box">
+                            <p id="cobot_feedback">No cobot messages yet.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card pick-card">
+                    <div class="card-head">
+                        <h2>Pick Monitor</h2>
+                        <span id="pick_summary" class="pill pill-neutral">no scan yet</span>
+                        <div class="spacer"></div>
+                        <span id="pick_gate" class="eyebrow"></span>
+                    </div>
+                    <div class="legend">
+                        <span><i class="sw sw-pending"></i>pending</span>
+                        <span><i class="sw sw-picked"></i>picked · verified</span>
+                        <span><i class="sw sw-unverified"></i>picked · unverified</span>
+                        <span><i class="sw sw-failed"></i>failed</span>
+                        <span><i class="sw sw-skipped"></i>skipped</span>
+                    </div>
+                    <div id="pick_list" class="picks"></div>
+                </section>
+            </div>
+
+            <!-- ============= right column: system health ============= -->
+            <section class="card health-card">
+                <div class="card-head">
+                    <h2>System Health</h2>
+                    <div class="spacer"></div>
+                    <span id="health_age" class="pill pill-neutral">no summary yet</span>
                 </div>
-
-                <img id="latest_image" src="" alt="No image found">
+                <div id="health_list" class="health">
+                    <p class="muted">Waiting for /health/summary from the health monitor…</p>
+                </div>
             </section>
 
         </div>
     </main>
 
-    <script type="module" src="/static/app.js?v=7"></script>
+    <script type="module" src="/static/app.js?v=8"></script>
 </body>
 </html>

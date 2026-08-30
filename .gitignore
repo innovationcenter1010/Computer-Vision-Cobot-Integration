@@ -34,7 +34,7 @@ vision_workspace/operation/inbox/
 vision_workspace/operation/debug_images/
 vision_workspace/operation/results/
 vision_workspace/operation/captures/
-vision_workspace/models/training_runs/
+vision_workspace/training_runs/
 
 # --- Per-camera intrinsics (written by the streamer from the camera SDK,
 #     relayed as CameraInfo; belongs to this camera, not the repo) ---
@@ -43,3 +43,11 @@ vision_workspace/operation/camera_intrinsics.json
 # --- Misc ---
 outputs/
 *.svg
+
+# --- Vision workspace dev-PC env + downloaded checkpoints (see vision_workspace/README.md) ---
+vision_workspace/.venv/
+vision_workspace/weights/          # trained + base .pt (already *.pt above; belt and braces)
+vision_workspace/tools/*.pt
+vision_workspace/tools/*.ts
+vision_workspace/*.pt
+vision_workspace/*.ts

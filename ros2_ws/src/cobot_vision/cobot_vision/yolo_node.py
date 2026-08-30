@@ -15,6 +15,7 @@ Only node in the graph that imports ultralytics.
 """
 
 import threading
+import time
 
 import numpy as np
 
@@ -25,9 +26,10 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from std_srvs.srv import Trigger
 
-from cobot_interfaces.msg import ObbDetection, ObbDetectionArray
+from cobot_interfaces.msg import Heartbeat, ObbDetection, ObbDetectionArray
 from cobot_interfaces.srv import LocateDot
 
+from cobot_health.heartbeat import HeartbeatPublisher
 from cobot_vision.yolo_obb_detector import (
     YoloOBBDetector,
     remove_duplicate_detections,
@@ -45,7 +47,7 @@ class YoloNode(Node):
     def __init__(self):
         super().__init__("yolo_node")
 
-        self.declare_parameter("model_path", "/ws/vision_workspace/models/cans_obb_best.pt")
+        self.declare_parameter("model_path", "/ws/vision_workspace/weights/cans_obb_best.pt")
         self.declare_parameter("confidence", 0.50)
         self.declare_parameter("iou", 0.4)
         self.declare_parameter("max_detections", 20)
@@ -54,7 +56,7 @@ class YoloNode(Node):
         self.declare_parameter("duplicate_center_distance_px", 50.0)
 
         # Calibration marker model (see /vision/locate_dot).
-        self.declare_parameter("dot_model_path", "/ws/vision_workspace/models/red_dot_best.pt")
+        self.declare_parameter("dot_model_path", "/ws/vision_workspace/weights/red_dot_best.pt")
         self.declare_parameter("dot_confidence", 0.5)
 
         model_path = self.get_parameter("model_path").value
@@ -74,8 +76,14 @@ class YoloNode(Node):
         self._frame_lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
         self._latest_stamp = None
+        self._latest_frame_mono: float | None = None
 
         self._scan_thread: threading.Thread | None = None
+        # (inference ms, detection count, monotonic finish time) of the last
+        # completed scan — written as one tuple so the heartbeat reads a
+        # consistent snapshot without a lock.
+        self._last_scan: tuple[float, int, float] | None = None
+        self._scan_failures = 0
 
         # Red-dot model: loaded on first locate_dot call, guarded because the
         # load takes seconds and calls may race.
@@ -88,6 +96,8 @@ class YoloNode(Node):
         )
         self.create_service(Trigger, "/vision/scan", self._on_scan)
         self.create_service(LocateDot, "/vision/locate_dot", self._on_locate_dot)
+
+        self._hb = HeartbeatPublisher(self, self._health_report)
 
     # ------------------------------------------------------------------
     # Inputs
@@ -103,6 +113,7 @@ class YoloNode(Node):
         with self._frame_lock:
             self._latest_frame = frame
             self._latest_stamp = msg.header.stamp
+            self._latest_frame_mono = time.monotonic()
 
     def _on_set_parameters(self, params):
         from rcl_interfaces.msg import SetParametersResult
@@ -156,7 +167,9 @@ class YoloNode(Node):
 
     def _run_scan(self, frame: np.ndarray, stamp):
         try:
+            t0 = time.monotonic()
             detections = self._detector.detect(image=frame, save_visual=False)
+            inference_ms = (time.monotonic() - t0) * 1000.0
 
             if self.get_parameter("remove_duplicates").value:
                 detections = remove_duplicate_detections(
@@ -183,10 +196,51 @@ class YoloNode(Node):
                 msg.detections.append(out)
 
             self._detections_pub.publish(msg)
-            self.get_logger().info(f"Scan complete: {len(msg.detections)} detections")
+            self._last_scan = (inference_ms, len(msg.detections), time.monotonic())
+            self.get_logger().info(
+                f"Scan complete: {len(msg.detections)} detections in {inference_ms:.0f} ms"
+            )
 
         except Exception as e:  # noqa: BLE001 — a failed scan must not kill the node
+            self._scan_failures += 1
             self.get_logger().error(f"Scan failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Health
+    # ------------------------------------------------------------------
+
+    def _health_report(self):
+        now = time.monotonic()
+        with self._frame_lock:
+            frame_mono = self._latest_frame_mono
+        frame_age = None if frame_mono is None else now - frame_mono
+        scan = self._last_scan
+        in_flight = self._scan_thread is not None and self._scan_thread.is_alive()
+
+        level = Heartbeat.LEVEL_OK
+        if frame_age is None:
+            level = Heartbeat.LEVEL_WARN
+            detail = "model loaded · no color frames yet"
+        elif frame_age > 2.0:
+            level = Heartbeat.LEVEL_WARN
+            detail = f"model loaded · color frame stale {frame_age:.1f}s"
+        elif in_flight:
+            detail = "scan in progress"
+        elif scan is None:
+            detail = "idle · no scan yet"
+        else:
+            detail = f"idle · last scan {scan[0]:.0f} ms, {scan[1]} detections"
+
+        return level, detail, {
+            "model_loaded": True,
+            "dot_model_loaded": self._dot_model is not None,
+            "scan_in_flight": in_flight,
+            "last_scan_ms": None if scan is None else scan[0],
+            "last_detection_count": None if scan is None else scan[1],
+            "last_scan_age_s": None if scan is None else now - scan[2],
+            "scan_failures": self._scan_failures,
+            "frame_age_s": frame_age,
+        }
 
     # ------------------------------------------------------------------
     # Calibration marker

@@ -13,6 +13,8 @@
   <license>MIT</license>
 
   <depend>rclpy</depend>
+  <depend>cobot_health</depend>
+  <depend>cobot_interfaces</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>

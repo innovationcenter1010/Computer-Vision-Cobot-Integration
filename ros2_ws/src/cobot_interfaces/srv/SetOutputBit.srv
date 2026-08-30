@@ -1,0 +1,13 @@
+# Write one controller output bit. Address by NAME (io.outputs in
+# cobot_setup.yaml, e.g. "gripper") or by raw address; name wins when set.
+string name
+uint8 IO_GENERAL_INPUT = 0
+uint8 IO_GENERAL_OUTPUT = 1
+uint8 io_type 1
+uint16 group
+uint8 bit
+bool value
+---
+bool success
+int32 status_code
+string message

@@ -16,7 +16,9 @@
   <exec_depend>cobot_camera</exec_depend>
   <exec_depend>cobot_vision</exec_depend>
   <exec_depend>cobot_control</exec_depend>
+  <exec_depend>cobot_tasks</exec_depend>
   <exec_depend>cobot_web</exec_depend>
+  <exec_depend>cobot_health</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

@@ -1,14 +1,34 @@
-# One supervised cartesian move (mm / degrees, robot base frame).
-# Used by the task manager's calibration grid loop; also useful for jogging.
-# Cancel policy: a single move runs to completion (the pybind layer has no
-# mid-motion stop) — a cancel marks the goal canceled once the move settles.
+# One supervised cartesian move (mm / degrees, robot base frame), served by
+# cobot_control (C++ / YMConnect). Used by task_manager's calibration grid and
+# by cobot_operation for every choreography move.
+#
+# Motion profile: named profile from cobot_setup.yaml (empty = "default");
+# the numeric fields below override it per goal when non-zero / >= 0.
+# tool_number -1 = the profile's tool file.
+#
+# Cancel policy: cancel is IMMEDIATE — MotionStop(true) on the controller,
+# trajectory cleared, goal CANCELED. The arm can end anywhere along the
+# segment. /cobot/pause holds a move in place (MotionStop(false)) and
+# /cobot/resume continues it; the goal stays active while paused.
 float64 x
 float64 y
 float64 z
 float64 rx
 float64 ry
 float64 rz
+string motion_profile
+float64 speed 0.0
+uint8 INTERP_DEFAULT = 0
+uint8 INTERP_JOINT = 1
+uint8 INTERP_LINEAR = 2
+uint8 interpolation 0
+int32 accuracy_mm -2
+int32 tool_number -1
 ---
 bool success
+int32 status_code
 string message
 ---
+float32 progress_percent
+int32 steps_remaining
+bool paused

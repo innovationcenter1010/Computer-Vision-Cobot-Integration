@@ -1,0 +1,12 @@
+# Read the current TCP pose (base frame, active tool file) straight from the
+# controller. /cobot/state carries the same pose at the poll rate.
+---
+bool success
+float64 x
+float64 y
+float64 z
+float64 rx
+float64 ry
+float64 rz
+int32 status_code
+string message

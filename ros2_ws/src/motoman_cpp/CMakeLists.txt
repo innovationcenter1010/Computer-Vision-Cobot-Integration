@@ -23,7 +23,7 @@ find_package(pybind11 REQUIRED)
 
 # ---------------- YMConnect (vendored binary SDK) ----------------
 
-set(YMCONNECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/YMConnect)
+set(YMCONNECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../cobot_control/third_party/YMConnect)
 
 add_library(YMConnect SHARED IMPORTED)
 set_target_properties(YMConnect PROPERTIES
@@ -35,11 +35,12 @@ set_target_properties(YMConnect PROPERTIES
 
 pybind11_add_module(motoman_cpp
   src/MotomanRobotBindings.cpp
-  src/MotomanRobot.cpp
+  ../cobot_control/src/motoman_robot.cpp
 )
 
 target_include_directories(motoman_cpp PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/../cobot_control/include/cobot_control
 )
 
 target_link_libraries(motoman_cpp PRIVATE YMConnect)

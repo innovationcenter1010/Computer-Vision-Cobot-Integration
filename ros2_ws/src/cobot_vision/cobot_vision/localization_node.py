@@ -79,7 +79,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Bool, Empty
 from std_srvs.srv import Trigger
 
-from cobot_interfaces.msg import CanTarget, CanTargetArray, ObbDetectionArray
+from cobot_interfaces.msg import Heartbeat, CanTarget, CanTargetArray, ObbDetectionArray
 from cobot_interfaces.srv import (
     CalibrationSample,
     GetLayerHeight,
@@ -87,6 +87,7 @@ from cobot_interfaces.srv import (
     VerifyTarget,
 )
 
+from cobot_health.heartbeat import HeartbeatPublisher
 from cobot_vision.calibration import CalibrationError, CameraRobotCalibration
 from cobot_vision.pathing import order_detections_snake
 from cobot_vision.rotation import calculate_real_rz
@@ -116,6 +117,7 @@ DOT_TIMEOUT_SEC = 20.0
 class _Target:
     """Internal working object; duck-types the attrs pathing.py expects."""
 
+    detection_index: int
     class_id: int
     confidence: float
     center_x: float
@@ -229,6 +231,7 @@ class LocalizationNode(Node):
         self._manual_request_pub = self.create_publisher(
             Bool, "/vision/manual_dot_request", LATCHED_QOS
         )
+        self._manual_request_active = bool(False)
         self._manual_request_pub.publish(Bool(data=False))
         self.create_subscription(
             PointStamped, "/vision/manual_dot_click", self._on_manual_click, 10
@@ -260,6 +263,11 @@ class LocalizationNode(Node):
             callback_group=cal_group,
         )
         self._dot_client = self.create_client(LocateDot, "/vision/locate_dot")
+
+        # Health (heartbeat timer runs in its OWN callback group — never in
+        # cal_group, whose handlers block for up to 120 s).
+        self._last_targets_count: int | None = None
+        self._hb = HeartbeatPublisher(self, self._health_report)
 
         self.get_logger().info("localization_node ready")
 
@@ -368,7 +376,7 @@ class LocalizationNode(Node):
 
         targets: list[_Target] = []
 
-        for det in msg.detections:
+        for det_index, det in enumerate(msg.detections):
             d = self._sample_depth_mm(depth, det.center_x, det.center_y)
             if d is None:
                 self.get_logger().warn(
@@ -378,6 +386,7 @@ class LocalizationNode(Node):
                 continue
 
             target = _Target(
+                detection_index=det_index,
                 class_id=det.class_id,
                 confidence=det.confidence,
                 center_x=det.center_x,
@@ -416,6 +425,7 @@ class LocalizationNode(Node):
         out.header.frame_id = "robot_base"
         for target in ordered:
             can = CanTarget()
+            can.detection_index = int(target.detection_index)
             can.class_id = target.class_id
             can.confidence = target.confidence
             can.real_x = target.real_x
@@ -425,7 +435,62 @@ class LocalizationNode(Node):
             out.targets.append(can)
 
         self._targets_pub.publish(out)
+        self._last_targets_count = len(out.targets)
         self.get_logger().info(f"Published {len(out.targets)} ordered targets")
+
+    # ------------------------------------------------------------------
+    # Health
+    # ------------------------------------------------------------------
+
+    def _health_report(self):
+        calibration = self._calibration  # replaced wholesale on compute; read once
+        with self._depth_lock:
+            depth_len = len(self._depth_buffer)
+            depth_stamp = self._depth_buffer[-1][0] if self._depth_buffer else None
+        with self._intrinsics_lock:
+            intrinsics_ok = self._intrinsics is not None
+        now_s = self.get_clock().now().nanoseconds * 1e-9
+        depth_age = None if depth_stamp is None else max(0.0, now_s - depth_stamp)
+        require_intrinsics = bool(self.get_parameter("require_intrinsics").value)
+
+        problems = []
+        level = Heartbeat.LEVEL_OK
+        if calibration is None:
+            level = Heartbeat.LEVEL_ERROR
+            problems.append("NOT CALIBRATED")
+        if depth_age is None:
+            level = max(level, Heartbeat.LEVEL_WARN)
+            problems.append("no depth frames yet")
+        elif depth_age > 2.0:
+            level = max(level, Heartbeat.LEVEL_WARN)
+            problems.append(f"depth stale {depth_age:.1f}s")
+        if require_intrinsics and not intrinsics_ok:
+            level = max(level, Heartbeat.LEVEL_WARN)
+            problems.append("no intrinsics")
+
+        rms = calibration.rms_mm if calibration is not None else (None, None, None)
+        if problems:
+            detail = " · ".join(problems)
+        else:
+            detail = f"calibrated · rms {rms[0]:.1f} / {rms[1]:.1f} / {rms[2]:.1f} mm"
+
+        return level, detail, {
+            "calibrated": calibration is not None,
+            "rms_x_mm": rms[0],
+            "rms_y_mm": rms[1],
+            "rms_z_mm": rms[2],
+            "calibration_source": None if calibration is None else calibration.source,
+            "calibration_samples": None if calibration is None else calibration.sample_count,
+            "intrinsics_ok": intrinsics_ok,
+            "depth_buffer_len": depth_len,
+            "depth_buffer_age_s": depth_age,
+            "last_targets_count": self._last_targets_count,
+            "manual_click_waiting": self._manual_event is not None and not self._manual_event.is_set() and self._manual_result is None and self._manual_waiting(),
+        }
+
+    def _manual_waiting(self) -> bool:
+        # True while a calibration sample is blocked on an operator click.
+        return bool(getattr(self, "_manual_request_active", False))
 
     # ------------------------------------------------------------------
     # Tier-1 depth services
@@ -552,6 +617,7 @@ class LocalizationNode(Node):
         with self._manual_lock:
             self._manual_result = None
         self._manual_event.clear()
+        self._manual_request_active = bool(True)
         self._manual_request_pub.publish(Bool(data=True))
         self.get_logger().info(
             "[calibration] waiting for a marker click (or skip) on the web UI"
@@ -562,6 +628,7 @@ class LocalizationNode(Node):
             with self._manual_lock:
                 return self._manual_result
         finally:
+            self._manual_request_active = bool(False)
             self._manual_request_pub.publish(Bool(data=False))
 
     def _on_cal_begin(self, request, response):
@@ -608,6 +675,7 @@ class LocalizationNode(Node):
 
         self._samples_uvd.clear()
         self._samples_xyz.clear()
+        self._manual_request_active = bool(False)
         self._manual_request_pub.publish(Bool(data=False))
         mode = "MANUAL clicks" if manual else "dot model warm"
         self.get_logger().info(f"[calibration] buffer cleared, {mode}")

@@ -1,0 +1,7 @@
+# Stop the arm immediately (controlled stop, NOT an e-stop).
+# clear_trajectory=false keeps the queued points so MotionStart can resume.
+bool clear_trajectory
+---
+bool success
+int32 status_code
+string message

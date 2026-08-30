@@ -1,11 +1,19 @@
-# Pick ONE can and place it (cobot_node choreography). The layer loop lives
-# in the task manager, which sends these goals sequentially.
-# Cancel policy: honored at the next safe phase boundary — never between
-# grip and lift, so a cancel can leave the arm holding a can at the check
-# position (result.message says which phase it stopped in).
+# Pick ONE can and place it. Served by cobot_operation (Python choreography),
+# which chains cobot_control primitives (MoveToPose, set_output_bit, the
+# /cobot/state sensor poll). The layer loop lives in the task manager, which
+# sends these goals sequentially.
+#
+# Cancel policy: IMMEDIATE — the in-flight MoveToPose is canceled (controller
+# MotionStop) and the choreography returns at once. The can may still be
+# gripped and the arm may be mid-segment; result.phase says where it stopped.
+# /cobot/pause on cobot_operation holds the arm in place and blocks the next
+# primitive until /cobot/resume.
 CanTarget target
 ---
 bool success
 string message
+string phase                  # phase in which the goal ended
+JobResult[] jobs              # every primitive executed, in order
+SensorAssert[] sensor_asserts
 ---
 string phase    # check / approach / grip / lift / place — mirrors choreography

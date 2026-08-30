@@ -1,0 +1,9 @@
+# vision_workspace/.venv — dev-PC training + export environment ONLY.
+# Never installed in the docker image, never in CI, never inside colcon.
+# Plain `pip install torch` on Windows/Linux x86 resolves the CPU wheel; for a
+# CUDA build install torch first from https://pytorch.org/get-started/locally/
+# and then `pip install -r requirements.txt` on top of it.
+ultralytics>=8.3.100      # YOLO26 OBB/detect training + YOLOE export
+onnx>=1.14,<1.18          # ONNX read-back / checker for the manifest
+onnxslim                  # ultralytics `simplify=True` backend
+pyyaml

@@ -1,0 +1,16 @@
+# Update a named motion profile (motion_profiles in cobot_setup.yaml) at
+# runtime. Empty name = "default". Zero / negative numeric fields and
+# interpolation 0 mean "leave unchanged".
+string name
+uint8 INTERP_UNCHANGED = 0
+uint8 INTERP_JOINT = 1
+uint8 INTERP_LINEAR = 2
+uint8 interpolation
+float64 speed           # joint: % (0-100)  linear: mm/s (0-1500)
+float64 accel_ratio     # 20-100 %
+float64 decel_ratio     # 20-100 %
+int32 accuracy_mm       # -1 = planner rounds corners; 0 = exact; >0 mm  (use -2 for unchanged)
+---
+bool success
+int32 status_code
+string message

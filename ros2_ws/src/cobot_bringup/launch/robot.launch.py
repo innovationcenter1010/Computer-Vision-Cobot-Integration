@@ -3,7 +3,7 @@
     ros2 launch cobot_bringup robot.launch.py
     ros2 launch cobot_bringup robot.launch.py cobot:=false   # e.g. no robot attached
 
-Each node group can be toggled (camera / vision / cobot / web). All nodes read
+Each node group can be toggled (camera / vision / cobot / tasks / web / health). All nodes read
 config/cobot_params.yaml; respawn gives per-node crash isolation inside the
 single container.
 """
@@ -24,6 +24,9 @@ def generate_launch_description():
     bringup_share = Path(get_package_share_directory("cobot_bringup"))
     params_file = str(bringup_share / "config" / "cobot_params.yaml")
     trajectories_file = str(bringup_share / "config" / "trajectories.json")
+    # Named IO, motion profiles and tool profiles shared by cobot_control and
+    # cobot_operation (bind-mounted with the rest of config/).
+    setup_file = str(bringup_share / "config" / "cobot_setup.yaml")
     # Written by the calibration routine; lives in the bind-mounted config dir
     # so it survives container rebuilds. Missing file = not calibrated.
     calibration_file = str(bringup_share / "config" / "calibration.yaml")
@@ -34,6 +37,7 @@ def generate_launch_description():
         DeclareLaunchArgument("cobot", default_value="true"),
         DeclareLaunchArgument("tasks", default_value="true"),
         DeclareLaunchArgument("web", default_value="true"),
+        DeclareLaunchArgument("health", default_value="true"),
     ]
 
     nodes = [
@@ -69,12 +73,25 @@ def generate_launch_description():
         ),
         Node(
             package="cobot_control",
-            executable="cobot_node",
-            name="cobot_node",
-            parameters=[params_file, {"trajectories_file": trajectories_file}],
+            executable="cobot_control_node",
+            name="cobot_control",
+            parameters=[params_file, {"setup_file": setup_file}],
             condition=IfCondition(LaunchConfiguration("cobot")),
             respawn=True,
             respawn_delay=5.0,
+            output="screen",
+        ),
+        Node(
+            package="cobot_operation",
+            executable="cobot_operation_node",
+            name="cobot_operation",
+            parameters=[
+                params_file,
+                {"setup_file": setup_file, "trajectories_file": trajectories_file},
+            ],
+            condition=IfCondition(LaunchConfiguration("cobot")),
+            respawn=True,
+            respawn_delay=2.0,
             output="screen",
         ),
         Node(
@@ -93,6 +110,16 @@ def generate_launch_description():
             name="web_node",
             parameters=[params_file, {"params_file": params_file}],
             condition=IfCondition(LaunchConfiguration("web")),
+            respawn=True,
+            respawn_delay=2.0,
+            output="screen",
+        ),
+        Node(
+            package="cobot_health",
+            executable="health_monitor",
+            name="health_monitor",
+            parameters=[params_file],
+            condition=IfCondition(LaunchConfiguration("health")),
             respawn=True,
             respawn_delay=2.0,
             output="screen",

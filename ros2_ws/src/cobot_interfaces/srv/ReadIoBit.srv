@@ -1,0 +1,13 @@
+# One-off read of a controller IO bit, by name (io.sensors / io.outputs) or
+# raw address. The normal path for reads is the /cobot/state poll.
+string name
+uint8 IO_GENERAL_INPUT = 0
+uint8 IO_GENERAL_OUTPUT = 1
+uint8 io_type 0
+uint16 group
+uint8 bit
+---
+bool success
+bool value
+int32 status_code
+string message

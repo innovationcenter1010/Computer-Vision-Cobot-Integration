@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y \
     git \
     python3-pip \
     python3-colcon-common-extensions \
-    ros-humble-pybind11-vendor \
+    libyaml-cpp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- 2. ultralytics: heaviest layer, cached before everything else ----
@@ -52,10 +52,11 @@ WORKDIR /ws
 
 # ---- 4. rosdep layer: keyed on manifests only ----
 COPY ros2_ws/src/cobot_interfaces/package.xml  src/cobot_interfaces/package.xml
+COPY ros2_ws/src/cobot_health/package.xml      src/cobot_health/package.xml
 COPY ros2_ws/src/cobot_camera/package.xml      src/cobot_camera/package.xml
 COPY ros2_ws/src/cobot_vision/package.xml      src/cobot_vision/package.xml
-COPY ros2_ws/src/motoman_cpp/package.xml       src/motoman_cpp/package.xml
 COPY ros2_ws/src/cobot_control/package.xml     src/cobot_control/package.xml
+COPY ros2_ws/src/cobot_operation/package.xml   src/cobot_operation/package.xml
 COPY ros2_ws/src/cobot_tasks/package.xml       src/cobot_tasks/package.xml
 COPY ros2_ws/src/cobot_web/package.xml         src/cobot_web/package.xml
 COPY ros2_ws/src/cobot_bringup/package.xml     src/cobot_bringup/package.xml
@@ -78,7 +79,8 @@ RUN . /opt/ros/humble/setup.sh && \
 # =============================================================
 # Stage 2: runtime
 # Lean image — install tree only: launch files, message definitions,
-# and the compiled pybind .so in one artifact. No compilers, no source.
+# and the compiled cobot_control node (+ libYMConnect.so beside it) in one
+# artifact. No compilers, no source.
 # =============================================================
 FROM ros:humble-ros-core AS runtime
 
@@ -90,6 +92,8 @@ RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-rclcpp-action \
+    libyaml-cpp0.7 \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- 2. ultralytics: same earliest-layer rule as the builder ----

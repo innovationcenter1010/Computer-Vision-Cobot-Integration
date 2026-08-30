@@ -9,6 +9,9 @@ Outgoing websocket messages (app.js contract preserved):
     {"type": "command_result", "command": ..., "result": ...}
 plus new feedback types the legacy UI never had:
     {"type": "targets", ...} {"type": "cobot_status", ...} {"type": "layer_report", ...}
+    {"type": "detections", ...}   latest /vision/detections_px (pixel OBBs → overlay)
+    {"type": "health", ...}       latest /health/summary (per-node level + metrics)
+    {"type": "pick_event", ...}   one per can from /task/pick_event (pick monitor)
     {"type": "manual_dot_request", "waiting": bool}   (temporary, see below)
 
 TEMPORARY manual centre select: while localization publishes
@@ -27,6 +30,7 @@ import asyncio
 import base64
 import json
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -59,7 +63,18 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Empty
 from std_srvs.srv import Trigger
 
-from cobot_interfaces.msg import CanTargetArray, LayerReport, TaskStatus
+from cobot_interfaces.msg import (
+    CanTargetArray,
+    HealthSummary,
+    Heartbeat,
+    LayerReport,
+    NodeHealth,
+    ObbDetectionArray,
+    PickEvent,
+    TaskStatus,
+)
+
+from cobot_health.heartbeat import SUMMARY_TOPIC, HeartbeatPublisher, RateMeter
 
 
 SENSOR_QOS = QoSProfile(
@@ -81,6 +96,17 @@ COMMAND_ROUTES = {
     ("COBOT", "calibrate"): "/task/calibrate",
     ("CAMERA", "save"): "/camera/save_frames",  # capture pair → vision_workspace
 }
+
+HEALTH_LEVEL_NAMES = {
+    NodeHealth.LEVEL_OK: "ok",
+    NodeHealth.LEVEL_WARN: "warn",
+    NodeHealth.LEVEL_ERROR: "error",
+    NodeHealth.LEVEL_STALE: "stale",
+    NodeHealth.LEVEL_UNKNOWN: "unknown",
+}
+
+# Pick events kept for replay to a browser that connects mid-layer.
+MAX_PICK_EVENTS = 64
 
 TASK_STATE_NAMES = {
     TaskStatus.STATE_DISCONNECTED: "disconnected",
@@ -135,12 +161,23 @@ class WebNode(Node):
         # on the asyncio thread — a plain assignment, safe without a lock.
         self._last_status_payload: dict | None = None
         self._manual_waiting = False
+        self._last_detections_payload: dict | None = None
+        self._last_targets_payload: dict | None = None
+        self._last_health_payload: dict | None = None
+        self._last_health_mono: float | None = None
+        self._pick_events: list[dict] = []
+        self._stream_rate = RateMeter()
 
         self.create_subscription(Image, "/camera/color/image_raw", self._on_color, SENSOR_QOS)
         self.create_subscription(Image, "/camera/depth/image_raw", self._on_depth, SENSOR_QOS)
         self.create_subscription(CanTargetArray, "/vision/targets", self._on_targets, 10)
         self.create_subscription(TaskStatus, "/task/status", self._on_status, LATCHED_QOS)
         self.create_subscription(LayerReport, "/task/layer_report", self._on_report, 10)
+        self.create_subscription(
+            ObbDetectionArray, "/vision/detections_px", self._on_detections, 10
+        )
+        self.create_subscription(HealthSummary, SUMMARY_TOPIC, self._on_health, LATCHED_QOS)
+        self.create_subscription(PickEvent, "/task/pick_event", self._on_pick_event, 10)
 
         # TEMPORARY manual centre select: localization asks for a click, the
         # browser answers with a COLOR-image pixel.
@@ -160,7 +197,10 @@ class WebNode(Node):
         }
 
         stream_hz = float(self.get_parameter("web_stream_hz").value)
+        self._stream_hz_target = stream_hz
         self.create_timer(1.0 / stream_hz, self._stream_frames)
+
+        self._hb = HeartbeatPublisher(self, self._health_report)
 
         self.get_logger().info(f"web_node ready — UI on port {self.port}")
 
@@ -184,6 +224,7 @@ class WebNode(Node):
         payload = self._camera_frame_payload()
         if payload["rgb"] is None and payload["depth"] is None:
             return  # nothing received from the camera yet
+        self._stream_rate.tick()
         self.broadcast(payload)
 
     def _camera_frame_payload(self) -> dict:
@@ -205,12 +246,12 @@ class WebNode(Node):
         }
 
     def _on_targets(self, msg: CanTargetArray):
-        self.broadcast(
-            {
+        payload = {
                 "type": "targets",
                 "count": len(msg.targets),
                 "targets": [
                     {
+                        "detection_index": t.detection_index,
                         "real_x": t.real_x,
                         "real_y": t.real_y,
                         "real_z": t.real_z,
@@ -220,7 +261,101 @@ class WebNode(Node):
                     for t in msg.targets
                 ],
             }
+        self._last_targets_payload = payload
+        self.broadcast(payload)
+
+    def _on_detections(self, msg: ObbDetectionArray):
+        # A new scan invalidates the previous overlay and its pick colors.
+        payload = {
+            "type": "detections",
+            "stamp": msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+            "image_width": int(msg.image_width),
+            "image_height": int(msg.image_height),
+            "detections": [
+                {
+                    "index": i,
+                    "class_id": d.class_id,
+                    "confidence": float(d.confidence),
+                    "center_x": float(d.center_x),
+                    "center_y": float(d.center_y),
+                    "corners_px": [float(v) for v in d.corners_px],
+                }
+                for i, d in enumerate(msg.detections)
+            ],
+        }
+        self._last_detections_payload = payload
+        self._pick_events = []
+        self._last_targets_payload = None
+        self.broadcast(payload)
+
+    def _on_health(self, msg: HealthSummary):
+        self._last_health_mono = time.monotonic()
+        self._last_health_payload = self._health_payload(msg)
+        self.broadcast(self._last_health_payload)
+
+    def _health_payload(self, msg: HealthSummary) -> dict:
+        stamp_s = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        now_s = self.get_clock().now().nanoseconds * 1e-9
+        return {
+            "type": "health",
+            "level": HEALTH_LEVEL_NAMES.get(msg.level, "unknown"),
+            # Age from the message stamp (not receive time): the topic is
+            # latched, so a restarted web_node must not show an old summary as fresh.
+            "summary_age_s": max(0.0, now_s - stamp_s),
+            "nodes": [
+                {
+                    "name": n.node_name,
+                    "level": HEALTH_LEVEL_NAMES.get(n.level, "unknown"),
+                    "detail": n.detail,
+                    "age_s": float(n.age_s),
+                    "metrics": {kv.key: kv.value for kv in n.metrics},
+                }
+                for n in msg.nodes
+            ],
+        }
+
+    def _on_pick_event(self, msg: PickEvent):
+        payload = {
+            "type": "pick_event",
+            "index": int(msg.index),
+            "total": int(msg.total),
+            "detection_index": int(msg.detection_index),
+            "outcome": msg.outcome,
+            "verify_ran": bool(msg.verify_ran),
+            "verified": bool(msg.verified),
+            "measured_z": float(msg.measured_z),
+            "message": msg.message,
+            "target": {
+                "real_x": msg.target.real_x,
+                "real_y": msg.target.real_y,
+                "real_z": msg.target.real_z,
+                "real_rz": msg.target.real_rz,
+            },
+        }
+        self._pick_events = (self._pick_events + [payload])[-MAX_PICK_EVENTS:]
+        self.broadcast(payload)
+
+    def _health_report(self):
+        stream_hz, _ = self._stream_rate.read()
+        clients = len(self.ws_clients)
+        health_age = (
+            None if self._last_health_mono is None else time.monotonic() - self._last_health_mono
         )
+        with self._frame_lock:
+            have_frames = self._latest_color is not None or self._latest_depth is not None
+        level = Heartbeat.LEVEL_OK if self.ws_loop is not None else Heartbeat.LEVEL_WARN
+        detail = f"{clients} browser(s)"
+        if clients and have_frames:
+            detail += f" · stream {stream_hz:.1f} Hz"
+        elif not have_frames:
+            detail += " · no camera frames"
+        return level, detail, {
+            "ws_clients": clients,
+            "stream_hz_target": self._stream_hz_target,
+            "stream_hz_actual": stream_hz,
+            "health_summary_age_s": health_age,
+            "port": self.port,
+        }
 
     def _on_status(self, msg: TaskStatus):
         # Websocket type stays "cobot_status" — app.js contract unchanged.
@@ -461,6 +596,14 @@ def create_app(node: WebNode) -> FastAPI:
         await websocket.send_json(
             {"type": "manual_dot_request", "waiting": node._manual_waiting}
         )
+        if node._last_health_payload is not None:
+            await websocket.send_json(node._last_health_payload)
+        if node._last_detections_payload is not None:
+            await websocket.send_json(node._last_detections_payload)
+        if node._last_targets_payload is not None:
+            await websocket.send_json(node._last_targets_payload)
+        for event in list(node._pick_events):
+            await websocket.send_json(event)
 
         try:
             while True:
