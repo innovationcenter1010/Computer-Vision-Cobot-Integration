@@ -21,7 +21,14 @@ services:
       - "8000:8000"   # web UI only — ZMQ camera connects OUT to the host
 
     volumes:
-      # Model weights + scan results (source of truth, never baked)
+      # ONNX models + models.yaml registry (source of truth, never baked) —
+      # what detector_node loads (/ws/runtime_models/models.yaml)
+      - ./runtime_models:/ws/runtime_models
+      # Runtime-WRITABLE per-cell state (never baked): trajectories.json
+      # (cobot_operation), tooling_state.yaml + controller_profile/ dumps
+      # (cobot_control). See runtime_config/README.md.
+      - ./runtime_config:/ws/runtime_config
+      # Camera intrinsics JSON + scan results / captures
       - ./vision_workspace:/ws/vision_workspace
       # Saved camera frames (/camera/save_frames). Nested inside the mount
       # above — listed explicitly so the capture path is visible here and the

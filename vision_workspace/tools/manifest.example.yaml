@@ -1,5 +1,5 @@
 # EXAMPLE ONLY — this is what export_yoloe.py writes to
-# vision_workspace/models/<name>/manifest.yaml. Nothing has been exported yet;
+# runtime_models/<name>/manifest.yaml. Nothing has been exported yet;
 # the sha256, anchor count and class list below are placeholders.
 #
 # Field-for-field identical to the schema the Unitree-G1-Development detector

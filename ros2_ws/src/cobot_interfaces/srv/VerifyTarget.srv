@@ -1,8 +1,20 @@
-# Tier-1 sensing (cheap, no ML): is a can still present at this target?
-# Served by localization_node from the live depth stream; called by
-# cobot_node before committing the gripper to a pick.
+# Tier-1 sensing (cheap, no ML): was this target actually taken?
+# Served by localization_node from the live depth stream. Called by the task
+# manager's pick_layer workflow AFTER the PickCan action (pick + place) has
+# returned — the arm covers the camera mid-pick, so never call it earlier.
+# The pick-and-place choreography (cobot_operation) does not call this.
+#
+# Re-samples the depth at the pixel the target was detected at (Target.pixel_x/y)
+# and compares with the depth measured there at scan time (Target.depth_mm): a
+# taken can leaves the surface ~one can height deeper (larger depth reading).
+# Targets without a scan pixel fall back to inverting the calibration.
 
-CanTarget target
+Target target
 ---
-bool present
-float64 measured_z    # depth reading at the target center, mm
+bool success               # a measurement was taken; if false, ignore `present`
+string message             # why not: no depth / depth stale / no valid patch / not calibrated
+bool present               # |measured - expected| <= verify_tolerance_mm (something still there)
+float64 measured_depth_mm  # raw depth now at the target's pixel, mm
+float64 expected_depth_mm  # target.depth_mm (or the calibration-derived fallback), mm
+float64 delta_mm           # measured - expected; +ve = surface deeper = can gone
+float64 measured_z         # robot-frame Z of whatever is there now; -1 if uncalibrated

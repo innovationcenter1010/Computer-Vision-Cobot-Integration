@@ -1,0 +1,35 @@
+# Model registry for cobot_detector. Copy to runtime_models/models.yaml
+# (bind-mounted at /ws/runtime_models/ — edits need no rebuild).
+#
+# The leaf key (cans, red_dot, ...) is the `model_id` a Detect / Scan goal
+# names. Ids must be unique across both sections. `path` may be absolute or
+# relative to this file. Input size is read from the .onnx itself (fixed by
+# tools/export_to_onnx.py), so it is not declared here.
+#
+# type: obb   → rotated boxes; corners TL,TR,BR,BL + angle (radians)
+#       bbox  → axis-aligned boxes; same message, angle = 0
+#
+# layout (optional, default auto): how the graph's output head is decoded.
+#   auto    → classified from the output shape + manifest.yaml (recommended)
+#   raw     → [1, 4+nc(+1), N] head; decode + NMS in C++
+#   end2end → [1, max_det, 6|7] (YOLO26); NMS is inside the graph (iou unused)
+#   seg     → [1, 4+nc+mask, N] (YOLOE); boxes only, masks ignored; the class
+#             count comes from manifest.yaml, which is REQUIRED for seg
+
+runtime:                      # models the application runs every cycle
+  cans:
+    path: cans_obb_best/cans_obb_best.onnx
+    type: obb
+    confidence: 0.50
+    iou: 0.40
+    max_detections: 20
+    remove_duplicates: true            # second pass: centre-distance filter
+    duplicate_center_distance_px: 50.0
+
+calibration:                  # models only the calibration routine needs
+  red_dot:
+    path: red_dot_best/red_dot_best.onnx
+    type: bbox
+    confidence: 0.50
+    iou: 0.40
+    max_detections: 5

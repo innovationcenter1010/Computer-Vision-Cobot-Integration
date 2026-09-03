@@ -43,6 +43,11 @@ struct Pose
   std::string str() const;
 };
 
+// Wraps a degree value into [-180, 180), the wrist (T-axis) Euler convention.
+// Used only for rz after an offset is added — never for rx/ry (fixed by pick
+// orientation) or the S/L/U/R/B joints, which have no wraparound.
+double normalizeDeg180(double deg);
+
 enum class Interp { Joint, Linear };
 enum class IoKind { GeneralInput, GeneralOutput };
 
@@ -53,7 +58,8 @@ struct MotionProfile
   double accel_ratio{25.0};  // 20-100 %
   double decel_ratio{25.0};  // 20-100 %
   int32_t accuracy_mm{50};   // -1 = planner rounds corners; 0 = exact
-  int32_t tool_number{0};    // YRC1000 tool file
+  // No tool_number here on purpose: a profile says HOW to move, the tool
+  // file (TCP) is the node-level active tool, passed explicitly to addPoint.
 };
 
 struct ControllerState
@@ -72,7 +78,10 @@ struct MotionProgress
 {
   double percent{0};
   int32_t steps_remaining{0};
-  bool reached{false};
+  // No `reached` flag on purpose: arrival is the NODE's judgement
+  // ("buffer empty AND controller stopped", after motion was observed to
+  // start). The old "percent >= 99 && steps <= 1" heuristic reported
+  // arrival while decelerating and accepted a whole unexecuted point.
 };
 
 struct ConnectOptions
@@ -105,6 +114,19 @@ public:
   RobotStatus readIoBit(IoKind kind, uint16_t group, uint8_t bit, bool & out);
   RobotStatus writeOutputBit(uint16_t group, uint8_t bit, bool value);
   RobotStatus readCurrentPose(int32_t tool_number, Pose & out);
+  // Joint angles S L U R B T in degrees (ReadPositionData JointDegrees).
+  RobotStatus readCurrentJoints(std::vector<double> & joints_deg);
+  // Pose + joints back-to-back under ONE lock (teach / remember flows).
+  RobotStatus readCurrentPoseAndJoints(
+    int32_t tool_number, Pose & pose, std::vector<double> & joints_deg);
+
+  // ---- read-only controller profile (system info, files) ----
+  RobotStatus readSystemInfo(std::string & model_name, std::string & software_version);
+  RobotStatus listConditionFiles(std::vector<std::string> & names);
+  // SaveFromControllerToString: the controller file is copied INTO `text`;
+  // nothing is written to the controller. Needs RS7=2 outside REMOTE mode.
+  RobotStatus readControllerFile(const std::string & file_name, std::string & text);
+  RobotStatus readRsParam(int32_t number, int32_t & value);  // RS<number>
   RobotStatus activeAlarms(std::vector<Alarm> & out);
   RobotStatus clearFaults();
   RobotStatus setServos(bool on);
@@ -112,21 +134,35 @@ public:
   RobotStatus pendantMessage(const std::string & text);  // truncated to 30 chars
 
   // ---- motion ----
-  RobotStatus addPoint(const Pose & pose, const MotionProfile & profile);
+  RobotStatus addPoint(const Pose & pose, const MotionProfile & profile, int32_t tool_number);
   RobotStatus motionStart();                      // starts, or RESUMES after motionStop(false)
   RobotStatus motionStop(bool clear_trajectory);  // immediate controlled stop
   RobotStatus clearTrajectory();
   RobotStatus motionProgress(MotionProgress & out);
-  // IK check against the current joint configuration. A failed IK is
-  // reported as reachable=false with `why`, not as an error status.
+  // IK check against the current joint configuration (the controller's own
+  // solver — the same one the motion planner uses, so a "no solution" here is
+  // exactly what would later become interpolation alarm 4684). A failed IK is
+  // reported as reachable=false with `why`, not as an error status. On
+  // success `joints_deg_out` holds the solution (S L U R B T, degrees) so the
+  // caller can run a joint-limit margin check.
   RobotStatus isReachable(
-    const Pose & pose, int32_t tool_number, bool & reachable, std::string & why);
+    const Pose & pose, int32_t tool_number, bool & reachable, std::string & why,
+    std::vector<double> & joints_deg_out);
+  // Same physical configuration, re-expressed through another tool file,
+  // using the CONTROLLER's kinematics (no motion, nothing written):
+  //   cart(from_tool) --IK (Delta, seeded with the current joints)--> joints
+  //   --FK with toolNumber = to_tool--> cart(to_tool)
+  // joints_in (6 values) skips the IK step. joints_out = the joints the
+  // returned pose corresponds to.
+  RobotStatus convertPose(
+    const Pose & in, int32_t from_tool, int32_t to_tool, const std::vector<double> * joints_in,
+    Pose & out, std::vector<double> & joints_out);
 
   // ---- variables ----
   RobotStatus readInt(uint16_t index, int32_t & out);
   RobotStatus writeInt(uint16_t index, int32_t value);
-  RobotStatus readPositionVar(uint16_t index, Pose & out);
-  RobotStatus writePositionVar(uint16_t index, const Pose & pose);
+  RobotStatus readPositionVar(uint16_t index, Pose & out, int32_t & tool_number);
+  RobotStatus writePositionVar(uint16_t index, const Pose & pose, int32_t tool_number);
 
 private:
   template<class F>

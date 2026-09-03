@@ -1,0 +1,24 @@
+# Select the ACTIVE tool file (TCP / coordinate system). Local state only -
+# nothing is written to the controller. Persisted to
+# <runtime_dir>/tooling_state.yaml so it survives restarts.
+#
+# Resolution: name != "" wins.
+#   name        "none" -> tool 0; otherwise a key of cobot_setup.yaml `tools`
+#   tool_number 0-63 when name is ""; the name becomes the first configured
+#               tool with that number, else "none" for 0, else the TOOL.CND
+#               name, else "tool<N>"
+# Rejected while a MoveToPose goal is executing (status_code 3).
+# When the controller profile is loaded, tool_number must exist in TOOL.CND
+# (status_code 4) unless force is set; an identity/empty slot is accepted
+# with a warning in message. When the profile is NOT loaded (disconnected,
+# read failed) only "none" and configured tools are accepted, unverified.
+string name
+int32 tool_number -1
+bool force false
+---
+bool success
+int32 status_code         # 0 ok; 2 invalid request; 3 busy; 4 unknown tool; 5 persist failed (state applied)
+string message
+int32 tool_number         # resulting active tool
+string name
+bool verified             # found in the parsed TOOL.CND

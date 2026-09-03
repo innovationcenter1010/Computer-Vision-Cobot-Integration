@@ -11,10 +11,16 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         # UI assets served by FastAPI; located at runtime via
         # ament_index get_package_share_directory("cobot_web").
-        (f"share/{package_name}/templates", ["templates/index.html"]),
+        (f"share/{package_name}/templates", ["templates/index.html", "templates/dev.html"]),
         (
             f"share/{package_name}/static",
-            ["static/app.js", "static/commands.js", "static/style.css"],
+            [
+                "static/app.js",
+                "static/commands.js",
+                "static/dev.js",
+                "static/replay.js",
+                "static/style.css",
+            ],
         ),
     ],
     install_requires=["setuptools"],

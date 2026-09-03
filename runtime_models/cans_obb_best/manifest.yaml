@@ -1,0 +1,28 @@
+schema_version: 1
+name: cans_obb_best
+type: detector
+task: obb
+source_weights: cans_obb_best.pt
+onnx: cans_obb_best.onnx
+onnx_sha256: 4b89671a43d63dfa8fa11d251abfbf1b84d31bef80dc8d2a809c0652715358cf
+input:
+  name: images
+  width: 640
+  height: 480
+  layout: nchw
+  normalize: div255
+output:
+  name: output0
+  layout: yolo_obb
+  shape:
+  - 1
+  - 300
+  - 7
+unused_outputs: []
+classes:
+- top can
+letterbox:
+  pad_value: 114
+defaults:
+  conf_threshold: 0.25
+  nms_iou: 0.7

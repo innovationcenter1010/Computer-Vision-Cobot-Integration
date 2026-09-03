@@ -10,9 +10,11 @@ std_msgs/Header header
 uint32 index               # 1-based position in the layer
 uint32 total
 int32 detection_index      # index into the scan's ObbDetectionArray; -1 unknown
-CanTarget target
+Target target
 string outcome
-bool verify_ran            # verify_target was reachable and answered in time
+bool verify_ran            # verify_target answered in time AND took a measurement (success)
 bool verified              # verify ran AND reported the can gone (present == false)
 float64 measured_z         # robot-frame z now measured at the target; -1 if none
+float64 verify_delta_mm    # measured - scan-time depth at the target pixel; 0 if verify did not run
+string verify_message      # why verify could not measure (unavailable / timeout / service message); "" otherwise
 string message

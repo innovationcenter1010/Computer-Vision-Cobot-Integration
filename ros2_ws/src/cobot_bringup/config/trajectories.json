@@ -1,28 +1,49 @@
 {
-  "right": [
-    [652, -190, 730, 180, 0, 90],
-    [923, -190, 628, 180, 0, 90]
-  ],
-
-  "right_flip": [
-    [652, -190, 730, 180, 0, 90],
-    [923, -190, 628, 180, 0, 90]
-  ],
-
-  "left": [
-    [652, -190, 730, 180, 0, 90],
-    [923, -190, 628, 180, 0, 90]
-  ],
-
-  "left_flip": [
-    [652, -190, 730, 180, 0, 90],
-    [923, -190, 628, 180, 0, 90]
-  ],
-
-  "await": [
-    [930, -140, 200, 180, 0, 0],
-    [1, 2, 3, 4, 5, 6]
-  ],
-
-  "check": [0, -800, 600, 180, 0, 90]
+  "_comment": "Remembered positions (v2). Packaged SEED - the live copy is runtime_config/trajectories.json. Every pose is a commanded TCP pose in the robot BASE frame expressed in tool file `tool_number`; joints_deg (S L U R B T) becomes the canonical form once the controller has converted the pose. check = 1 pose, right/right_flip/left/left_flip = exactly 2 poses each. hide = 1 pose, not required (validated only if present) - served by cobot_operation's /cobot/hide action, sent by pick_layer before every scan so the arm clears the camera's view; copied from right[0].",
+  "version": 2,
+  "updated_at": null,
+  "points": {
+    "check": [
+      {"x": 0, "y": -800, "z": 600, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null}
+    ],
+    "hide": [
+      {"x": 652, "y": -190, "z": 730, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null}
+    ],
+    "right": [
+      {"x": 652, "y": -190, "z": 780, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null},
+      {"x": 993, "y": -190, "z": 578, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null}
+    ],
+    "right_flip": [
+      {"x": 652, "y": -190, "z": 780, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null},
+      {"x": 993, "y": -190, "z": 578, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null}
+    ],
+    "left": [
+      {"x": 652, "y": -190, "z": 780, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null},
+      {"x": 993, "y": -190, "z": 578, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null}
+    ],
+    "left_flip": [
+      {"x": 652, "y": -190, "z": 780, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null},
+      {"x": 993, "y": -190, "z": 578, "rx": 180, "ry": 0, "rz": 90,
+       "frame": "base", "tool_number": 0, "joints_deg": null,
+       "taught_at": null, "converted_from": null}
+    ]
+  }
 }

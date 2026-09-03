@@ -1,0 +1,19 @@
+# Test copy of the registry. Paths point at the bind-mounted workspace so
+# test_golden can run the real models when they are present; the registry
+# test itself only needs the file to parse.
+runtime:
+  cans:
+    path: /ws/runtime_models/cans_obb_best/cans_obb_best.onnx
+    type: obb
+    confidence: 0.50
+    iou: 0.40
+    max_detections: 20
+    remove_duplicates: true
+    duplicate_center_distance_px: 50.0
+calibration:
+  red_dot:
+    path: /ws/runtime_models/red_dot_best/red_dot_best.onnx
+    type: bbox
+    confidence: 0.50
+    iou: 0.40
+    max_detections: 5

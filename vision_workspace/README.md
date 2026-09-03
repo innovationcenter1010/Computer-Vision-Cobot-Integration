@@ -36,10 +36,9 @@ vision_workspace/
 │   └── green_light/          # Roboflow export, polygon labels, single class "green_light"
 ├── weights/                  # trained .pt (gitignored)
 │   ├── base/                 # yolo26n-obb.pt, yolo26m-obb.pt, ... (pretrained starting points)
-│   ├── cans_obb_best.pt      # what yolo_node loads today (model_path in cobot_params.yaml)
-│   └── red_dot_best.pt       # calibration marker detector (dot_model_path)
+│   └── red_dot_best.pt       # calibration marker detector (dot model)
 ├── training_runs/            # ultralytics run output: metrics, plots, weights/best.pt (gitignored)
-├── models/                   # ONNX exports ONLY — see models/README.md
+├── (exports land in ../runtime_models/ — ONNX + models.yaml, see its README)
 ├── operation/                # runtime I/O with the container: camera_intrinsics.json, captures/, results/, inbox/
 ├── calibration/images/       # frames saved for camera→robot calibration
 └── tests/                    # standalone hardware/streaming smoke tests (not pytest)
@@ -132,10 +131,17 @@ discarded — it never ships). Both land in the cwd and are gitignored.
 `tools/manifest.example.yaml` shows the manifest it writes. Bump `--name`
 whenever the prompt set changes — the sha256 changes with it.
 
-**Status:** nothing has been exported yet and no node reads `models/`.
-`yolo_node` still loads `weights/cans_obb_best.pt` via `model_path` in
-`ros2_ws/src/cobot_bringup/config/cobot_params.yaml`. Wiring the ONNX
-manifests into a consumer node is a later step.
+**Status:** `detector_node` (C++, `ros2_ws/src/cobot_detector`) reads
+`/ws/runtime_models/models.yaml` (repo-root `runtime_models/`, bind-mounted)
+and runs the `.onnx` files it points at through ONNX Runtime; `manifest.yaml`
+beside each export is cross-checked at load (head type, class count). Export
+with —
+
+    python tools/export_to_onnx.py cans_obb_best     # -> runtime_models/cans_obb_best/
+    python tools/export_to_onnx.py red_dot_best      # -> runtime_models/red_dot_best/
+
+— and `runtime_models/models.yaml` names them. `.pt` weights never enter the
+container.
 
 ## What the container sees
 
@@ -143,8 +149,7 @@ manifests into a consumer node is a later step.
 
 | host                                   | container                                   |
 |----------------------------------------|---------------------------------------------|
-| `vision_workspace/weights/*.pt`        | `/ws/vision_workspace/weights/*.pt` (current `model_path`) |
-| `vision_workspace/models/<n>/`         | `/ws/vision_workspace/models/<n>/` (future ONNX consumer) |
+| `runtime_models/<n>/` + `models.yaml`  | `/ws/runtime_models/` (what detector_node loads) |
 | `vision_workspace/operation/`          | `/ws/vision_workspace/operation/` (runtime I/O) |
 
 No image rebuild is ever needed to swap a model. `.venv/`, `weights/`,

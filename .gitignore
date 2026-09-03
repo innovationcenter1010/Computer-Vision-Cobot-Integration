@@ -51,3 +51,8 @@ vision_workspace/tools/*.pt
 vision_workspace/tools/*.ts
 vision_workspace/*.pt
 vision_workspace/*.ts
+
+# --- Runtime-writable per-cell state (bind-mounted at /ws/runtime_config):
+#     remembered positions, active tool, controller profile dumps ---
+runtime_config/*
+!runtime_config/README.md

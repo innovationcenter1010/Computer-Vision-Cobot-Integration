@@ -39,3 +39,6 @@ __pycache__/
 *.svg
 datasets
 outputs
+
+# runtime-writable state is bind-mounted, never baked
+runtime_config/

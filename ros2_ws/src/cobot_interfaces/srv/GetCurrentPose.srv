@@ -1,5 +1,9 @@
-# Read the current TCP pose (base frame, active tool file) straight from the
-# controller. /cobot/state carries the same pose at the poll rate.
+# Read the current TCP pose (robot base frame, mm / deg) straight from the
+# controller, expressed in `tool_number` (-1 = the ACTIVE tool, see
+# /cobot/set_active_tool). /cobot/state carries the same pose at the poll
+# rate; use this service only when you need a specific non-active tool or a
+# pose+joints pair read back-to-back (teach / remember flows).
+int32 tool_number -1
 ---
 bool success
 float64 x
@@ -8,5 +12,7 @@ float64 z
 float64 rx
 float64 ry
 float64 rz
+int32 tool_number         # tool file the pose above is expressed in
+float64[] joints_deg      # S L U R B T at the same instant (empty if the joint read failed)
 int32 status_code
 string message

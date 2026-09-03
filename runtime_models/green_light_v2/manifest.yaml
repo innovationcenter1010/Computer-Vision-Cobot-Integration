@@ -1,0 +1,28 @@
+schema_version: 1
+name: green_light_v2
+type: detector
+task: detect
+source_weights: green_light_v2.pt
+onnx: green_light_v2.onnx
+onnx_sha256: d2d29e11565097424783c103d9574b4baa721d2b859ae7de4d7f700499e1ace2
+input:
+  name: images
+  width: 640
+  height: 480
+  layout: nchw
+  normalize: div255
+output:
+  name: output0
+  layout: yolo_detect
+  shape:
+  - 1
+  - 5
+  - 6300
+unused_outputs: []
+classes:
+- green_light
+letterbox:
+  pad_value: 114
+defaults:
+  conf_threshold: 0.25
+  nms_iou: 0.7

@@ -8,7 +8,7 @@
 # gripped and the arm may be mid-segment; result.phase says where it stopped.
 # /cobot/pause on cobot_operation holds the arm in place and blocks the next
 # primitive until /cobot/resume.
-CanTarget target
+Target target
 ---
 bool success
 string message

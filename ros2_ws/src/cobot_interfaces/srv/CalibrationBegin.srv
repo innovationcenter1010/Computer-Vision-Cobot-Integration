@@ -1,0 +1,18 @@
+# "A calibration run starts — clear the sample buffer and get ready."
+# Called by task_manager's calibration workflows; served by localization_node.
+# The request pins HOW the marker pixel is found for the whole run, so a
+# manual-click workflow and its automatic (detector) twin can coexist without
+# touching the node's manual_dot_selection parameter.
+uint8 MODE_DEFAULT = 0     # node parameter manual_dot_selection decides (legacy)
+uint8 MODE_MANUAL = 1      # operator clicks the marker on the dashboard feed
+uint8 MODE_AUTOMATIC = 2   # /vision/detect with model_id finds the marker
+
+uint8 mode
+string model_id            # automatic only; "" = localization's dot_model_id
+int32 class_id -1          # automatic only; keep detections of this class (-1 = any)
+int32 samples_per_pose 0   # automatic only; 0 = localization's dot_samples_per_pose
+---
+bool success
+string message
+string mode_name           # "manual" | "automatic"
+string model_id            # model actually used (automatic) or ""

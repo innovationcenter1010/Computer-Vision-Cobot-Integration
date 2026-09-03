@@ -11,11 +11,18 @@ Parity with the legacy sequence:
 Deliberate differences:
   * cancel is IMMEDIATE (the node cancels the in-flight move); the
     choreography returns at the next primitive boundary wherever that is.
+  * a failed move/gripper/sensor-read job halts the whole choreography at
+    the next boundary too (legacy only gated the pick descent; every step
+    is now load-bearing — see `aborted()`).
   * pause (cobot_control /cobot/pause) is honoured before every primitive.
   * descents use the tool profile's `descend_profile` (linear by default).
   * the legacy PositionOffset / offset-recovery path is dropped — it was a
     no-op (goto sent the raw pose) and dead code respectively.
   * "no free place slot" is an explicit failure (legacy: UnboundLocalError).
+  * every pose is sent with an EXPLICIT tool file number: teach points keep
+    the one they were stored with (trajectories.json v2), vision-derived
+    pick / approach poses get the active tool's number resolved at goal
+    accept — a tool switch can never leak into a running pick.
 """
 
 from __future__ import annotations
@@ -47,21 +54,35 @@ class Primitives(Protocol):
     async def wait_while_paused(self) -> None: ...
 
 
+TEACH_COUNTS = {"check": 1, "right": 2, "right_flip": 2, "left": 2, "left_flip": 2}
+
+
 @dataclass
 class PickConfig:
-    tool: ToolProfile
-    trajectories: dict  # trajectories.json: check, right, right_flip, left, left_flip
+    tool: ToolProfile  # default tool profile (the node passes the ACTIVE one per pick)
+    trajectories: dict  # key -> list[Pose6], each Pose6 carrying its tool_number
     sensor_assert_timeout_s: float = 1.0
     required_sensors: Tuple[str, ...] = REQUIRED_SENSORS
     known_sensors: List[str] = field(default_factory=list)  # from cobot_setup.yaml, for validation
+    # A raw IO sensor bit is not ground truth for a pick's success: it can be
+    # misaligned, bounce, or read stale during a fast cycle. False by default
+    # so a mismatched assert_sensor (e.g. existance_check after lift/place)
+    # is recorded on the report/UI but never fails the PickCan result on its
+    # own — the workflow's post-pick vision depth check (pick_layer) is the
+    # actual confirmation. Set true (cobot_params.yaml, bind-mounted, no
+    # rebuild) to restore the old gate if a cell needs it.
+    sensor_assert_authoritative: bool = False
 
     def validate(self) -> None:
-        for key in ("check", "right", "right_flip", "left", "left_flip"):
+        for key, want in TEACH_COUNTS.items():
             if key not in self.trajectories:
                 raise ValueError(f"trajectories.json is missing '{key}'")
-        for key in ("right", "right_flip", "left", "left_flip"):
-            if len(self.trajectories[key]) != 2:
-                raise ValueError(f"trajectories.json '{key}' must hold exactly 2 poses")
+            poses = self.trajectories[key]
+            if len(poses) != want:
+                raise ValueError(f"trajectories.json '{key}' must hold exactly {want} pose(s)")
+            for index, pose in enumerate(poses):
+                if not isinstance(pose, Pose6):
+                    raise ValueError(f"trajectories.json '{key}'[{index}] must be a Pose6")
         if self.known_sensors:
             missing = [s for s in self.required_sensors if s not in self.known_sensors]
             if missing:
@@ -80,11 +101,9 @@ class PickChoreography:
 
     # ------------------------------------------------------------------
 
-    def _teach(self, key: str, index: Optional[int] = None) -> Pose6:
-        raw = self.cfg.trajectories[key]
-        if index is not None:
-            raw = raw[index]
-        return Pose6.from_list(raw, f"trajectories.{key}" + ("" if index is None else f"[{index}]"))
+    def _teach(self, key: str, index: int = 0) -> Pose6:
+        """Stored pose, tool_number included (never re-expressed here)."""
+        return self.cfg.trajectories[key][index]
 
     def _select_place(
         self, divot: bool, right_full: bool, left_full: bool
@@ -106,10 +125,12 @@ class PickChoreography:
         can,
         should_abort: Optional[Callable[[], bool]] = None,
         on_phase: Optional[Callable[[str], None]] = None,
+        tool: Optional[ToolProfile] = None,
     ) -> OperationReport:
-        """`can` is anything with real_x / real_y / real_rz (CanTarget)."""
+        """`can` is anything with real_x / real_y / real_rz (Target).
+        `tool` = the ACTIVE tool's profile (defaults to cfg.tool)."""
         report = OperationReport("PICK AND PLACE REPORT")
-        tool = self.cfg.tool
+        tool = tool or self.cfg.tool
         prims = self.prims
 
         def phase(name: str) -> None:
@@ -118,10 +139,15 @@ class PickChoreography:
                 on_phase(name)
 
         def aborted() -> bool:
+            """True on an external cancel OR any primitive failure recorded
+            so far (a failed move/gripper/sensor job — see report.add).
+            Every primitive call below is followed by `if aborted(): return
+            report`, so ANY step failing halts the whole choreography at
+            that point instead of running the rest of the pick blind."""
             if should_abort is not None and should_abort():
                 report.mark_failed(f"aborted during '{self.phase}'")
                 return True
-            return False
+            return not report.overall_ok
 
         async def move(pose: Pose6, profile: str = "") -> JobResult:
             await prims.wait_while_paused()
@@ -134,7 +160,10 @@ class PickChoreography:
         async def assert_sensor(name: str, expected: bool) -> bool:
             job, actual = await prims.assert_sensor(name, expected, self.cfg.sensor_assert_timeout_s)
             report.add(job)
-            return report.add_sensor_assert(name, expected, actual)
+            passed = report.add_sensor_assert(name, expected, actual)
+            if not passed and self.cfg.sensor_assert_authoritative:
+                report.mark_failed(f"sensor {name}: expected {expected}, got {actual}")
+            return passed
 
         async def read_sensor(name: str) -> bool:
             job, value = await prims.read_sensor(name)
@@ -142,14 +171,17 @@ class PickChoreography:
             return bool(value)
 
         # can.real_x/real_y is where the CAN is in robot base coords. The
-        # tool tip must land there, so command the toolhead pose that puts it
-        # there (compression_mm is not applied yet — as before).
+        # tool tip must land there. For tool file 0 the Python tip offset
+        # converts tip -> commanded pose; for a real tool file the offset is
+        # zero (setup_config enforces it) and the controller's TCP is the tip.
+        # Both poses are tagged with the tool file they are expressed in.
+        # (compression_mm is not applied yet — as before.)
         rz = float(can.real_rz)
         rx, ry = PICK_ORIENTATION
         px, py, pz = tool.tip_offset.command_for(can.real_x, can.real_y, tool.pick_tip_z_mm, rz)
         ax, ay, az = tool.tip_offset.command_for(can.real_x, can.real_y, tool.approach_tip_z_mm, rz)
-        pick_pose = Pose6(px, py, pz, rx, ry, rz)
-        above_pose = Pose6(ax, ay, az, rx, ry, rz)
+        pick_pose = Pose6(px, py, pz, rx, ry, rz, tool_number=tool.tool_number)
+        above_pose = Pose6(ax, ay, az, rx, ry, rz, tool_number=tool.tool_number)
         check_pose = self._teach("check")
         descend = tool.descend_profile
 
@@ -162,12 +194,8 @@ class PickChoreography:
         await move(above_pose)
         if aborted():
             return report
-        last = await move(pick_pose, descend)
+        await move(pick_pose, descend)
         if aborted():
-            return report
-        if not last.ok:
-            # Legacy gate: never grip after a failed descent.
-            report.mark_failed(f"approach descent failed: {last.message}")
             return report
 
         phase("grip")

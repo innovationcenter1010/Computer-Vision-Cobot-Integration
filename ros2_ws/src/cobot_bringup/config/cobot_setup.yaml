@@ -1,48 +1,65 @@
-# Cell setup shared by cobot_control (C++) and cobot_operation (Python).
-# Injected by robot.launch.py as the `setup_file` parameter of both nodes.
-# Plain YAML (not ROS params) so maps of named things can live here.
-# Bind-mounted with the rest of config/ — editable without a rebuild.
-
 io:
-  # Controller IO addresses on the YRC1000. io_type: general_input |
-  # general_output. group = byte index, bit = 0-7 inside the byte.
   outputs:
-    gripper:          {io_type: general_output, group: 1, bit: 2}
+    gripper:
+      io_type: general_output
+      group: 1
+      bit: 2
   sensors:
-    # Read every poll tick by cobot_control and published by NAME on
-    # /cobot/state. All four were G1:B3 in the legacy code — PLACEHOLDERS.
-    # SET THE REAL ADDRESSES (and confirm input vs output) BEFORE PICKING.
-    existance_check:  {io_type: general_input, group: 1, bit: 3}
-    divot_check:      {io_type: general_input, group: 1, bit: 4}
-    right_complete:   {io_type: general_input, group: 1, bit: 5}
-    left_complete:    {io_type: general_input, group: 1, bit: 6}
-
+    existance_check:
+      io_type: general_input
+      group: 1
+      bit: 3
+    divot_check:
+      io_type: general_input
+      group: 1
+      bit: 4
+    right_complete:
+      io_type: general_input
+      group: 1
+      bit: 5
+    left_complete:
+      io_type: general_input
+      group: 1
+      bit: 6
+# Added to every commanded MoveToPose rz before it reaches the robot: the
+# physical toolhead is clocked 90 deg off the taught/commanded convention.
+# Software-side correction only -- the YRC1000 tool files are untouched.
+mount_yaw_offset_deg: 90.0
 motion_profiles:
-  # interpolation: joint | linear.  speed: joint -> % of max (0-100);
-  # linear -> mm/s (0-1500).  accel/decel ratio 20-100 %.  accuracy_mm:
-  # -1 = planner rounds corners (keeps velocity), 0 = exact stop at point.
-  # tool_number = YRC1000 tool file used for the commanded pose.
-  # "default" is what MoveToPose uses when the goal names no profile.
-  default:  {interpolation: joint,  speed: 25.0,  accel_ratio: 25.0, decel_ratio: 25.0, accuracy_mm: 50, tool_number: 0}
-  descend:  {interpolation: linear, speed: 100.0, accel_ratio: 25.0, decel_ratio: 25.0, accuracy_mm: 0,  tool_number: 0}
-
+  default:
+    interpolation: joint
+    speed: 25.0
+    accel_ratio: 25.0
+    decel_ratio: 25.0
+    accuracy_mm: 50
+  descend:
+    interpolation: linear
+    speed: 100.0
+    accel_ratio: 25.0
+    decel_ratio: 25.0
+    accuracy_mm: 0
 tools:
-  # Tooling profiles (cobot_operation). Two features hang off the OFFICIAL
-  # toolhead point (the pose the controller commands) and neither sits on it:
-  #   tip_offset_mm    - end of the tooling  (was cobot_node.tool_offset_mm)
-  #   marker_offset_mm - red calibration dot (still read from
-  #                      localization_node.marker_offset_mm; kept here so the
-  #                      pair is documented together)
-  # Both [x, y, z] mm along ROBOT BASE axes with the arm at rz=0 and the pick
-  # orientation (rx=180, ry=0). XY rotates with the commanded rz; Z does not.
-  # pick/approach heights are TIP heights in robot base mm.
-  vacuum_head:
+  none:
     tool_number: 0
-    tip_offset_mm: [0.0, 0.0, -600.0]
-    marker_offset_mm: [0.0, 0.0, 300.0]
-    compression_mm: 50.0          # declared, not yet applied (as before)
+    tip_offset_mm:
+    - 0.0
+    - 70.0
+    - 0.0
+    marker_offset_mm:
+    - 0.0
+    - 0.0
+    - 200.0
+    compression_mm: 50.0
+    pick_tip_z_mm: 220.0
+    approach_tip_z_mm: 400.0
+    descend_profile: descend
+  vacuum_head:
+    tool_number: 1
+    marker_offset_mm:
+    - 0.0
+    - 0.0
+    - 0.0
+    compression_mm: 50.0
     pick_tip_z_mm: 300.0
     approach_tip_z_mm: 401.0
-    descend_profile: descend      # motion profile for the two descents; "" = default
-
-active_tool: vacuum_head
+    descend_profile: descend

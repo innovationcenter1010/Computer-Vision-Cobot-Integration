@@ -75,6 +75,12 @@ class CameraNode(Node):
         self.declare_parameter("color_endpoint", "tcp://host.docker.internal:5550")
         self.declare_parameter("depth_endpoint", "tcp://host.docker.internal:5551")
         self.declare_parameter("publish_rate_hz", 15.0)
+        # Health-only thresholds on the *measured* stream Hz — independent of
+        # publish_rate_hz, which drives the polling timer. Changing these never
+        # changes how often the camera is polled, only when the heartbeat
+        # reports WARN/ERROR.
+        self.declare_parameter("publish_rate_warn_hz", 10.0)
+        self.declare_parameter("publish_rate_error_hz", 5.0)
         self.declare_parameter("color_frame_id", "camera_color")
         self.declare_parameter("depth_frame_id", "camera_depth")
         # Inside the vision_workspace bind mount → files appear on the host.
@@ -87,6 +93,8 @@ class CameraNode(Node):
         color_endpoint = self.get_parameter("color_endpoint").value
         depth_endpoint = self.get_parameter("depth_endpoint").value
         publish_rate_hz = self.get_parameter("publish_rate_hz").value
+        self._publish_rate_warn_hz = float(self.get_parameter("publish_rate_warn_hz").value)
+        self._publish_rate_error_hz = float(self.get_parameter("publish_rate_error_hz").value)
         self._color_frame_id = self.get_parameter("color_frame_id").value
         self._depth_frame_id = self.get_parameter("depth_frame_id").value
 
@@ -212,7 +220,10 @@ class CameraNode(Node):
             elif age > STREAM_STALE_SEC:
                 level = Heartbeat.LEVEL_ERROR
                 problems.append(f"{name} stalled {age:.1f}s")
-            elif hz < 0.5 * self._publish_rate_hz:
+            elif hz < self._publish_rate_error_hz:
+                level = Heartbeat.LEVEL_ERROR
+                problems.append(f"{name} slow {hz:.1f} Hz")
+            elif hz < self._publish_rate_warn_hz:
                 level = max(level, Heartbeat.LEVEL_WARN)
                 problems.append(f"{name} slow {hz:.1f} Hz")
 
@@ -233,6 +244,8 @@ class CameraNode(Node):
             "color_last_index": self._last_color_index,
             "depth_last_index": self._last_depth_index,
             "publish_rate_hz": self._publish_rate_hz,
+            "publish_rate_warn_hz": self._publish_rate_warn_hz,
+            "publish_rate_error_hz": self._publish_rate_error_hz,
             "intrinsics_published": self._intrinsics_mtime is not None,
         }
 

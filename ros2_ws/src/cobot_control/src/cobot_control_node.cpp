@@ -2,11 +2,16 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <utility>
 
 #include "cobot_interfaces/msg/alarm.hpp"
 #include "cobot_interfaces/msg/key_value.hpp"
+#include "cobot_interfaces/msg/tool_file.hpp"
+#include "cobot_interfaces/msg/user_frame.hpp"
 
 namespace cobot_control
 {
@@ -38,6 +43,12 @@ std::string alarmText(const std::vector<cobot_interfaces::msg::Alarm> & alarms)
   return s;
 }
 
+// The alarm this cell actually throws: a point accepted into the trajectory
+// that the controller then cannot interpolate to (see the fork's
+// docs/cobot_driver.md — the reachability gate + figure carry exist to turn
+// this mid-motion alarm into a rejected goal).
+constexpr uint32_t kInterpolationAlarm = 4684;
+
 }  // namespace
 
 // ============================================================ construction
@@ -57,17 +68,73 @@ CobotControlNode::CobotControlNode(const rclcpp::NodeOptions & options)
   check_reachability_ = declare_parameter<bool>("check_reachability", true);
   pendant_messages_ = declare_parameter<bool>("pendant_messages", true);
   heartbeat_period_s_ = declare_parameter<double>("heartbeat_period_s", 2.0);
+  // Runtime-writable state (tooling_state.yaml, controller_profile/ dumps).
+  runtime_dir_ = declare_parameter<std::string>("runtime_dir", "");
+  // Controller profile: "controller" reads it over YMConnect after connect;
+  // "fixture" parses profile_fixture_dir (zero-hardware path).
+  profile_source_ = declare_parameter<std::string>("profile_source", "controller");
+  profile_fixture_dir_ = declare_parameter<std::string>("profile_fixture_dir", "");
+  profile_files_.tool_file = declare_parameter<std::string>("profile_tool_file", "TOOL.CND");
+  profile_files_.uframe_file =
+    declare_parameter<std::string>("profile_uframe_file", "UFRAME.CND");
+  profile_dump_ = declare_parameter<bool>("profile_dump", true);
+  poll_joints_ = declare_parameter<bool>("poll_joints", true);
+  // --- motion wait (ported from the fork's hardware-tested cobot_driver) ---
+  motion_poll_period_s_ = declare_parameter<double>("motion_poll_period_s", 0.05);
+  motion_start_grace_s_ = declare_parameter<double>("motion_start_grace_s", 3.0);
+  motion_feedback_hz_ = declare_parameter<double>("motion_feedback_hz", 5.0);
+  joint_limit_margin_deg_ = declare_parameter<double>("joint_limit_margin_deg", 5.0);
+  joint_limits_min_deg_ =
+    declare_parameter<std::vector<double>>("joint_limits_min_deg", std::vector<double>{});
+  joint_limits_max_deg_ =
+    declare_parameter<std::vector<double>>("joint_limits_max_deg", std::vector<double>{});
+
+  // Live tuning (dev panel → /cobot_control/set_parameters): rclcpp updates
+  // its parameter store, but the checks read the cached members above — this
+  // callback keeps them in sync so a change takes effect without a restart.
+  // Every other parameter is refused: the rest of this constructor consumed
+  // them already (connections, timers, files), so a live set would silently
+  // do nothing — better to say so than pretend it applied.
+  param_cb_ = add_on_set_parameters_callback(
+    [this](const std::vector<rclcpp::Parameter> & params) {
+      rcl_interfaces::msg::SetParametersResult result;
+      result.successful = true;
+      for (const auto & p : params) {
+        const std::string & n = p.get_name();
+        if (n == "joint_limit_margin_deg") {
+          std::lock_guard<std::mutex> lock(joint_limits_mtx_);
+          joint_limit_margin_deg_ = p.as_double();
+        } else if (n == "joint_limits_min_deg" || n == "joint_limits_max_deg") {
+          const std::vector<double> v = p.as_double_array();
+          if (!v.empty() && v.size() != 6) {
+            result.successful = false;
+            result.reason = n + " needs 6 values (S L U R B T) or [] to skip the check";
+            return result;
+          }
+          std::lock_guard<std::mutex> lock(joint_limits_mtx_);
+          (n == "joint_limits_min_deg" ? joint_limits_min_deg_ : joint_limits_max_deg_) = v;
+        } else {
+          result.successful = false;
+          result.reason = n + " is read once at startup — restart the container to apply";
+          return result;
+        }
+      }
+      return result;
+    });
 
   if (setup_file_.empty()) {
     throw std::runtime_error(
             "setup_file parameter is required (cobot_bringup/config/cobot_setup.yaml)");
   }
   setup_ = SetupConfig::load(setup_file_);  // throws with a clear message; launch respawns
-  pose_tool_number_ = setup_.motion_profiles.at("default").tool_number;
+  for (const auto & d : setup_.deprecations) {
+    RCLCPP_WARN(get_logger(), "%s: %s", setup_file_.c_str(), d.c_str());
+  }
   RCLCPP_INFO(
-    get_logger(), "setup: %zu sensors, %zu outputs, %zu motion profiles from %s",
+    get_logger(), "setup: %zu sensors, %zu outputs, %zu motion profiles, %zu tools from %s",
     setup_.sensors.size(), setup_.outputs.size(), setup_.motion_profiles.size(),
-    setup_file_.c_str());
+    setup_.tools.size(), setup_file_.c_str());
+  initActiveTool();
 
   ConnectOptions copts;
   copts.timeout_ms = static_cast<uint32_t>(std::max(connect_timeout_ms, 50));
@@ -79,6 +146,8 @@ CobotControlNode::CobotControlNode(const rclcpp::NodeOptions & options)
   status_pub_ = create_publisher<CobotStatus>(
     "/cobot/status", rclcpp::QoS(1).reliable().transient_local());
   state_pub_ = create_publisher<CobotState>("/cobot/state", rclcpp::QoS(1).reliable());
+  profile_pub_ = create_publisher<ControllerProfile>(
+    "/cobot/profile", rclcpp::QoS(1).reliable().transient_local());
   hb_pub_ = create_publisher<Heartbeat>("/health/heartbeat", rclcpp::QoS(10).reliable());
 
   // ---- groups ----
@@ -123,6 +192,15 @@ CobotControlNode::CobotControlNode(const rclcpp::NodeOptions & options)
   get_active_alarms_srv_ = create_service<cobot_interfaces::srv::GetActiveAlarms>(
     "/cobot/get_active_alarms", std::bind(&CobotControlNode::onGetActiveAlarms, this, _1, _2),
     qos, io_group_);
+  set_active_tool_srv_ = create_service<cobot_interfaces::srv::SetActiveTool>(
+    "/cobot/set_active_tool", std::bind(&CobotControlNode::onSetActiveTool, this, _1, _2),
+    qos, io_group_);
+  convert_pose_srv_ = create_service<cobot_interfaces::srv::ConvertPose>(
+    "/cobot/convert_pose", std::bind(&CobotControlNode::onConvertPose, this, _1, _2),
+    qos, io_group_);
+  reload_profile_srv_ = create_service<Trigger>(
+    "/cobot/reload_profile", std::bind(&CobotControlNode::onReloadProfile, this, _1, _2),
+    qos, io_group_);
   pause_srv_ = create_service<Trigger>(
     "/cobot/pause", std::bind(&CobotControlNode::onPause, this, _1, _2), qos, io_group_);
   resume_srv_ = create_service<Trigger>(
@@ -148,6 +226,17 @@ CobotControlNode::CobotControlNode(const rclcpp::NodeOptions & options)
     std::chrono::duration<double>(std::max(heartbeat_period_s_, 0.2)),
     std::bind(&CobotControlNode::heartbeatTick, this), hb_group_);
 
+  // ---- controller profile ----
+  if (profile_source_ == "fixture") {
+    if (profile_fixture_dir_.empty()) {
+      throw std::runtime_error("profile_source=fixture needs profile_fixture_dir");
+    }
+    std::map<std::string, std::string> raw;
+    installProfile(buildProfile(fixtureSource(profile_fixture_dir_), profile_files_, &raw), "fixture");
+  } else {
+    publishProfile();  // empty shell until the first connect (loaded=false)
+  }
+
   RCLCPP_INFO(get_logger(), "cobot_control up; polling %s every %.0f ms", robot_ip_.c_str(),
     poll_period_s_ * 1000.0);
 }
@@ -158,7 +247,14 @@ CobotControlNode::~CobotControlNode()
   if (hb_timer_) {hb_timer_->cancel();}
   if (busy_) {robot_->motionStop(true);}
   joinMoveThread();
+  joinProfileThread();
   robot_.reset();  // disconnect (servos off)
+}
+
+void CobotControlNode::joinProfileThread()
+{
+  std::lock_guard<std::mutex> lock(profile_thread_mtx_);
+  if (profile_thread_.joinable()) {profile_thread_.join();}
 }
 
 void CobotControlNode::joinMoveThread()
@@ -220,6 +316,7 @@ bool CobotControlNode::tryConnect()
   RCLCPP_INFO(get_logger(), "connected to %s: %s", robot_ip_.c_str(), st.message.c_str());
   connect_attempts_ = 0;
   publishStatus(CobotStatus::STATE_IDLE, st.message, true);
+  startProfileRead();  // read-once controller profile (idempotent per connect)
   return true;
 }
 
@@ -242,6 +339,16 @@ void CobotControlNode::pollTick()
       msg.connected = false;
       msg.paused = paused_;
       msg.busy = busy_;
+      {
+        const ActiveTool t = activeTool();  // selection is visible even offline
+        msg.active_tool_number = t.number;
+        msg.active_tool_name = t.name;
+        msg.pose_tool_number = t.number;
+      }
+      {
+        std::lock_guard<std::mutex> lock(profile_mtx_);
+        msg.profile_loaded = profile_.loaded;
+      }
       publishState(msg);
       return;
     }
@@ -299,10 +406,25 @@ void CobotControlNode::pollTick()
     }
   }
 
-  Pose p;
-  if (robot_->readCurrentPose(pose_tool_number_, p).ok()) {
-    msg.x = p.x; msg.y = p.y; msg.z = p.z;
-    msg.rx = p.rx; msg.ry = p.ry; msg.rz = p.rz;
+  {
+    const ActiveTool t = activeTool();
+    msg.active_tool_number = t.number;
+    msg.active_tool_name = t.name;
+    msg.pose_tool_number = t.number;
+    Pose p;
+    std::vector<double> joints;
+    const RobotStatus pst = poll_joints_ ?
+      robot_->readCurrentPoseAndJoints(t.number, p, joints) :
+      robot_->readCurrentPose(t.number, p);
+    if (pst.ok()) {
+      msg.x = p.x; msg.y = p.y; msg.z = p.z;
+      msg.rx = p.rx; msg.ry = p.ry; msg.rz = p.rz;
+      msg.joints_deg = joints;
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(profile_mtx_);
+    msg.profile_loaded = profile_.loaded;
   }
 
   if (cs.alarming) {
@@ -316,13 +438,9 @@ void CobotControlNode::pollTick()
     }
   }
 
-  if (busy_) {
-    MotionProgress mp;
-    const RobotStatus ps = robot_->motionProgress(mp);
-    std::lock_guard<std::mutex> lock(state_mtx_);
-    last_progress_ = mp;
-    last_progress_status_ = ps;
-  } else {
+  // Motion progress is read FRESH by the move loop itself (fork-style) —
+  // the poll no longer caches a sample the loop could act on stale.
+  if (!busy_) {
     // Idle: surface controller-side problems on the latched status.
     if (cs.alarming) {
       publishStatus(CobotStatus::STATE_ERROR, alarmText(msg.alarms));
@@ -377,15 +495,27 @@ void CobotControlNode::heartbeatTick()
   kv("alarming", s.alarming ? "true" : "false");
   kv("poll_ms", std::to_string(static_cast<int>(s.poll_ms)));
   kv("robot_ip", robot_ip_);
+  {
+    const ActiveTool t = activeTool();
+    kv("active_tool", t.name);
+    kv("active_tool_number", std::to_string(t.number));
+    kv("active_tool_verified", t.verified ? "true" : "false");
+  }
+  kv("profile_loaded", s.profile_loaded ? "true" : "false");
   hb_pub_->publish(hb);
 }
 
 // ============================================================ MoveToPose
 
 MotionProfile CobotControlNode::resolveProfile(
-  const MoveToPose::Goal & goal, std::string & profile_name)
+  const MoveToPose::Goal & goal, std::string & profile_name, int32_t & tool_number,
+  double & mount_yaw_offset_deg)
 {
+  // The tool file is NOT part of the profile: goal.tool_number >= 0 (a pose
+  // stored with its own coordinate system) wins, otherwise the active tool.
+  tool_number = goal.tool_number >= 0 ? goal.tool_number : active_tool_number_.load();
   std::lock_guard<std::mutex> lock(setup_mtx_);
+  mount_yaw_offset_deg = setup_.mount_yaw_offset_deg;
   profile_name = goal.motion_profile.empty() ? "default" : goal.motion_profile;
   auto it = setup_.motion_profiles.find(profile_name);
   if (it == setup_.motion_profiles.end()) {
@@ -399,7 +529,6 @@ MotionProfile CobotControlNode::resolveProfile(
   if (goal.interpolation == MoveToPose::Goal::INTERP_LINEAR) {p.interpolation = Interp::Linear;}
   if (goal.speed > 0.0) {p.speed = goal.speed;}
   if (goal.accuracy_mm >= -1) {p.accuracy_mm = goal.accuracy_mm;}
-  if (goal.tool_number >= 0) {p.tool_number = goal.tool_number;}
   return p;
 }
 
@@ -472,14 +601,56 @@ void CobotControlNode::releaseMotion()
   }
 }
 
+bool CobotControlNode::jointLimitsOk(
+  const std::vector<double> & joints_deg, std::string & detail) const
+{
+  // Ported from the fork's pose_validator (limits are PARAMETERS — the old
+  // hardcoded table listed the T axis as -2..+2 deg, which no wrist has).
+  // Empty limits = check skipped; the controller's IK answer stands alone.
+  static const char * kAxisNames[] = {"S", "L", "U", "R", "B", "T"};
+  // Copy under the lock: the set_parameters callback may swap these while a
+  // motion is being validated on another executor thread.
+  double margin;
+  std::vector<double> lim_min, lim_max;
+  {
+    std::lock_guard<std::mutex> lock(joint_limits_mtx_);
+    margin = joint_limit_margin_deg_;
+    lim_min = joint_limits_min_deg_;
+    lim_max = joint_limits_max_deg_;
+  }
+  const size_t count = std::min(joints_deg.size(), std::min(lim_min.size(), lim_max.size()));
+  for (size_t i = 0; i < count; ++i) {
+    const double to_min = joints_deg[i] - lim_min[i] - margin;
+    const double to_max = lim_max[i] - joints_deg[i] - margin;
+    if (std::min(to_min, to_max) < 0.0) {
+      char buf[160];
+      std::snprintf(
+        buf, sizeof(buf), "joint %s = %.1f deg is inside the %.1f deg margin of [%.1f, %.1f]",
+        i < 6 ? kAxisNames[i] : "?", joints_deg[i], margin, lim_min[i], lim_max[i]);
+      detail = buf;
+      return false;
+    }
+  }
+  return true;
+}
+
 void CobotControlNode::executeMove(std::shared_ptr<GoalHandle> gh)
 {
   const auto goal = gh->get_goal();
   auto result = std::make_shared<MoveToPose::Result>();
   auto feedback = std::make_shared<MoveToPose::Feedback>();
-  const Pose pose{goal->x, goal->y, goal->z, goal->rx, goal->ry, goal->rz};
   std::string profile_name;
-  const MotionProfile prof = resolveProfile(*goal, profile_name);
+  int32_t tool = 0;
+  double mount_yaw_offset_deg = 0.0;
+  const MotionProfile prof = resolveProfile(*goal, profile_name, tool, mount_yaw_offset_deg);
+  // Every commanded pose is corrected here, regardless of caller (choreography
+  // moves, teach points, calibration grid) — see SetupConfig::mount_yaw_offset_deg.
+  // Only rz (T) wraps: it's the only axis the offset is added to, and the
+  // only one with a 360 deg periodic Euler/joint convention (rx/ry are fixed
+  // by the pick orientation; S/L/U/R/B are untouched here).
+  const Pose pose{
+    goal->x, goal->y, goal->z, goal->rx, goal->ry,
+    normalizeDeg180(goal->rz + mount_yaw_offset_deg)};
 
   stop_requested_ = false;
   publishStatus(CobotStatus::STATE_BUSY, "move_to_pose " + pose.str(), true);
@@ -518,12 +689,19 @@ void CobotControlNode::executeMove(std::shared_ptr<GoalHandle> gh)
   if (check_reachability_) {
     bool reachable = false;
     std::string why;
-    const RobotStatus st = robot_->isReachable(pose, prof.tool_number, reachable, why);
+    std::vector<double> solution_deg;
+    const RobotStatus st = robot_->isReachable(pose, tool, reachable, why, solution_deg);
     if (!st.ok()) {abort(st.code, "reachability check: " + st.text()); finish(); return;}
     if (!reachable) {abort(2, "unreachable pose: " + why); finish(); return;}
+    std::string limit_detail;
+    if (!jointLimitsOk(solution_deg, limit_detail)) {
+      abort(2, "reachable but too close to a joint limit: " + limit_detail);
+      finish();
+      return;
+    }
   }
 
-  RobotStatus st = robot_->addPoint(pose, prof);
+  RobotStatus st = robot_->addPoint(pose, prof, tool);
   if (!st.ok()) {abort(st.code, "add point: " + st.text()); finish(); return;}
   st = robot_->motionStart();
   if (!st.ok()) {
@@ -533,35 +711,34 @@ void CobotControlNode::executeMove(std::shared_ptr<GoalHandle> gh)
     return;
   }
   RCLCPP_INFO(
-    get_logger(), "moving to %s [%s %s speed=%.1f]", pose.str().c_str(), profile_name.c_str(),
-    prof.interpolation == Interp::Linear ? "linear" : "joint", prof.speed);
+    get_logger(), "moving to %s [%s %s speed=%.1f tool=%d]", pose.str().c_str(),
+    profile_name.c_str(), prof.interpolation == Interp::Linear ? "linear" : "joint", prof.speed,
+    tool);
 
-  uint64_t seen_seq;
-  {
-    std::lock_guard<std::mutex> lock(state_mtx_);
-    seen_seq = poll_seq_;
-  }
-  // The poll may have sampled progress just before MotionStart; require two
-  // fresh samples before trusting `reached`.
-  int fresh_samples = 0;
-  auto segment_start = std::chrono::steady_clock::now();
-  const auto wait_step = std::chrono::duration<double>(std::max(poll_period_s_, 0.02) * 2.0);
+  // ---- the wait: ported from the fork's hardware-tested run_motion ----
+  // (cobot-vision-development, cobot_driver_node.cpp). The loop reads the
+  // controller DIRECTLY each iteration — state and steps must be fresh,
+  // never the poll's cached sample (a stale sample once meant a false
+  // "reached pose" right after MotionStart). Completion = buffer empty AND
+  // the controller reporting stopped, after motion was actually observed to
+  // start; the old "progress >= 99% && steps <= 1" reported arrival while
+  // still decelerating and accepted one whole unexecuted point.
+  const auto poll = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::duration<double>(std::max(motion_poll_period_s_, 0.005)));
+  const auto feedback_period =
+    std::chrono::duration<double>(1.0 / std::max(motion_feedback_hz_, 0.5));
+  const auto grace = std::chrono::duration<double>(std::max(motion_start_grace_s_, 0.1));
+  constexpr int32_t queued_count = 1;
+
+  auto begin = std::chrono::steady_clock::now();
+  auto segment_start = begin;             // moving time only — pause resets it
+  auto last_feedback = begin - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+    feedback_period);
+  bool observed_start = false;
+  int32_t last_steps = queued_count;
+  double last_percent = 0.0;
 
   while (rclcpp::ok()) {
-    CobotState snapshot;
-    MotionProgress prog;
-    RobotStatus prog_st;
-    {
-      std::unique_lock<std::mutex> lock(state_mtx_);
-      if (poll_cv_.wait_for(lock, wait_step, [&] {return poll_seq_ != seen_seq;})) {
-        seen_seq = poll_seq_;
-        ++fresh_samples;
-      }
-      snapshot = last_state_;
-      prog = last_progress_;
-      prog_st = last_progress_status_;
-    }
-
     if (gh->is_canceling()) {
       robot_->motionStop(true);
       robot_->clearTrajectory();
@@ -572,45 +749,80 @@ void CobotControlNode::executeMove(std::shared_ptr<GoalHandle> gh)
       abort(3, "stopped by /cobot/motion_stop");
       break;
     }
-    if (!robot_->isConnected() || !snapshot.connected) {
-      abort(1, "robot link lost during motion");
+
+    // --- controller state; alarms come first ------------------------------
+    // An alarm mid-trajectory (4684 interpolation being the one this cell
+    // hits) stops the arm at the controller, but the buffer still holds
+    // points and the run state can linger. Catch it here and report the
+    // code instead of waiting out the timeout.
+    ControllerState cs;
+    const RobotStatus state_st = robot_->readState(cs);
+    if (!state_st.ok()) {
+      abort(1, "lost contact with the controller during motion: " + state_st.text());
       break;
     }
-    if (snapshot.alarming) {
+    if (cs.alarming || cs.erroring) {
       robot_->motionStop(true);
       robot_->clearTrajectory();
-      abort(4, "controller alarm: " + alarmText(snapshot.alarms));
+      std::vector<Alarm> alarms;
+      robot_->activeAlarms(alarms);
+      std::string m = "controller alarm";
+      bool interpolation = false;
+      for (const auto & a : alarms) {
+        m += " " + std::to_string(a.code) + "/" + std::to_string(a.subcode) +
+          (a.name.empty() ? "" : " (" + a.name + ")");
+        interpolation = interpolation || a.code == kInterpolationAlarm;
+      }
+      if (interpolation) {
+        m += " — the point was accepted but could not be interpolated to; the "
+          "reachability gate passed a pose the motion planner rejects "
+          "(IK branch changed mid-path?)";
+      }
+      abort(4, m);
+      break;
+    }
+    if (!cs.servo_on && observed_start) {
+      robot_->motionStop(true);
+      abort(7, "servos dropped out mid-motion");
       break;
     }
 
+    // --- pause ------------------------------------------------------------
     if (paused_) {
       holdMotion();
       feedback->paused = true;
-      feedback->progress_percent = static_cast<float>(prog.percent);
-      feedback->steps_remaining = prog.steps_remaining;
+      feedback->progress_percent = static_cast<float>(last_percent);
+      feedback->steps_remaining = last_steps;
       gh->publish_feedback(feedback);
-      segment_start = std::chrono::steady_clock::now();  // timeout counts moving time only
+      std::this_thread::sleep_for(poll);
+      segment_start = std::chrono::steady_clock::now();
+      if (!observed_start) {begin = segment_start;}  // grace excludes the pause
       continue;
     }
     if (held_) {
       releaseMotion();
-      fresh_samples = 0;
       continue;
     }
 
-    if (fresh_samples < 2) {continue;}
-
+    // --- progress: fresh reads, never a cache -----------------------------
+    MotionProgress prog;
+    const RobotStatus prog_st = robot_->motionProgress(prog);
     if (!prog_st.ok()) {
       robot_->motionStop(true);
       abort(prog_st.code, "progress read: " + prog_st.text());
       break;
     }
-    feedback->paused = false;
-    feedback->progress_percent = static_cast<float>(prog.percent);
-    feedback->steps_remaining = prog.steps_remaining;
-    gh->publish_feedback(feedback);
+    last_steps = prog.steps_remaining;
+    last_percent = prog.percent;
 
-    if (prog.reached) {
+    if (!observed_start &&
+      (cs.running || prog.steps_remaining < queued_count || prog.percent > 0.0))
+    {
+      observed_start = true;
+    }
+
+    // --- completion: buffer empty AND controller stopped ------------------
+    if (observed_start && prog.steps_remaining == 0 && !cs.running) {
       result->success = true;
       result->status_code = 0;
       result->message = "reached pose";
@@ -619,14 +831,42 @@ void CobotControlNode::executeMove(std::shared_ptr<GoalHandle> gh)
       break;
     }
 
-    const double moving_s =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - segment_start).count();
+    const auto now_tp = std::chrono::steady_clock::now();
+    if (!observed_start && now_tp - begin > grace) {
+      if (prog.steps_remaining == 0) {
+        // Nothing to do — the controller consumed the trajectory immediately.
+        result->success = true;
+        result->status_code = 0;
+        result->message = "already at target";
+        gh->succeed(result);
+        break;
+      }
+      robot_->motionStop(true);
+      robot_->clearTrajectory();
+      abort(
+        8, "motion did not start within " + std::to_string(motion_start_grace_s_) +
+        " s — check servos, HOLD, and that the pendant is in REMOTE or PLAY");
+      break;
+    }
+
+    const double moving_s = std::chrono::duration<double>(now_tp - segment_start).count();
     if (moving_s > motion_timeout_s_) {
       robot_->motionStop(true);
       robot_->clearTrajectory();
-      abort(5, "motion timeout after " + std::to_string(static_cast<int>(moving_s)) + " s");
+      abort(
+        5, "motion timeout after " + std::to_string(static_cast<int>(moving_s)) + " s with " +
+        std::to_string(last_steps) + " point(s) still queued");
       break;
     }
+
+    if (now_tp - last_feedback > feedback_period) {
+      last_feedback = now_tp;
+      feedback->paused = false;
+      feedback->progress_percent = static_cast<float>(prog.percent);
+      feedback->steps_remaining = prog.steps_remaining;
+      gh->publish_feedback(feedback);
+    }
+    std::this_thread::sleep_for(poll);
   }
   if (!rclcpp::ok() && gh->is_active()) {
     robot_->motionStop(true);
@@ -807,9 +1047,9 @@ void CobotControlNode::onSetMotionProfile(
   setup_.motion_profiles[name] = p;
   fill(*res, RobotStatus::okay("profile '" + name + "' updated"));
   RCLCPP_INFO(
-    get_logger(), "motion profile '%s': %s speed=%.1f accel=%.0f decel=%.0f acc=%d tool=%d",
+    get_logger(), "motion profile '%s': %s speed=%.1f accel=%.0f decel=%.0f acc=%d",
     name.c_str(), p.interpolation == Interp::Linear ? "linear" : "joint", p.speed, p.accel_ratio,
-    p.decel_ratio, p.accuracy_mm, p.tool_number);
+    p.decel_ratio, p.accuracy_mm);
 }
 
 void CobotControlNode::onReadIntVar(
@@ -834,8 +1074,10 @@ void CobotControlNode::onReadPositionVar(
   cobot_interfaces::srv::ReadPositionVar::Response::SharedPtr res)
 {
   Pose p;
-  const RobotStatus st = robot_->readPositionVar(req->index, p);
+  int32_t tool = 0;
+  const RobotStatus st = robot_->readPositionVar(req->index, p, tool);
   res->x = p.x; res->y = p.y; res->z = p.z; res->rx = p.rx; res->ry = p.ry; res->rz = p.rz;
+  res->tool_number = tool;
   fill(*res, st);
 }
 
@@ -844,17 +1086,22 @@ void CobotControlNode::onWritePositionVar(
   cobot_interfaces::srv::WritePositionVar::Response::SharedPtr res)
 {
   const Pose p{req->x, req->y, req->z, req->rx, req->ry, req->rz};
-  fill(*res, robot_->writePositionVar(req->index, p));
+  const int32_t tool = req->tool_number >= 0 ? req->tool_number : active_tool_number_.load();
+  fill(*res, robot_->writePositionVar(req->index, p, tool));
 }
 
 void CobotControlNode::onGetCurrentPose(
-  cobot_interfaces::srv::GetCurrentPose::Request::ConstSharedPtr,
+  cobot_interfaces::srv::GetCurrentPose::Request::ConstSharedPtr req,
   cobot_interfaces::srv::GetCurrentPose::Response::SharedPtr res)
 {
+  const int32_t tool = req->tool_number >= 0 ? req->tool_number : active_tool_number_.load();
   Pose p;
-  const RobotStatus st = robot_->readCurrentPose(pose_tool_number_, p);
+  std::vector<double> joints;
+  const RobotStatus st = robot_->readCurrentPoseAndJoints(tool, p, joints);
   res->x = p.x; res->y = p.y; res->z = p.z; res->rx = p.rx; res->ry = p.ry; res->rz = p.rz;
-  fill(*res, st, p.str());
+  res->tool_number = tool;
+  res->joints_deg = joints;
+  fill(*res, st, p.str() + " tool " + std::to_string(tool));
 }
 
 void CobotControlNode::onGetActiveAlarms(
@@ -869,6 +1116,438 @@ void CobotControlNode::onGetActiveAlarms(
     res->alarms.push_back(m);
   }
   fill(*res, st, std::to_string(alarms.size()) + " active alarm(s)");
+}
+
+// ============================================================ active tool
+
+ActiveTool CobotControlNode::activeTool() const
+{
+  std::lock_guard<std::mutex> lock(tool_mtx_);
+  return active_tool_;
+}
+
+void CobotControlNode::setActiveTool(const ActiveTool & tool)
+{
+  std::lock_guard<std::mutex> lock(tool_mtx_);
+  active_tool_ = tool;
+  active_tool_number_ = tool.number;
+}
+
+void CobotControlNode::initActiveTool()
+{
+  ActiveTool t;
+  t.name = setup_.active_tool_default;
+  t.number = 0;
+  if (t.name != "none") {
+    if (const ToolBinding * b = setup_.findTool(t.name)) {t.number = b->tool_number;}
+  }
+  t.source = "setup_default";
+
+  if (runtime_dir_.empty()) {
+    RCLCPP_WARN(
+      get_logger(), "runtime_dir is unset: the active tool selection will not persist "
+      "across restarts (booting with '%s' from cobot_setup.yaml)", t.name.c_str());
+  } else {
+    tooling_state_path_ = (std::filesystem::path(runtime_dir_) / "tooling_state.yaml").string();
+    ActiveTool saved;
+    std::string err;
+    if (ToolingState::load(tooling_state_path_, saved, err)) {
+      if (saved.name == "none") {
+        saved.number = 0;
+      } else if (const ToolBinding * b = setup_.findTool(saved.name)) {
+        if (b->tool_number != saved.number) {
+          RCLCPP_WARN(
+            get_logger(), "tooling_state.yaml says '%s' is tool file %d but cobot_setup.yaml "
+            "says %d — using %d", saved.name.c_str(), saved.number, b->tool_number,
+            b->tool_number);
+          saved.number = b->tool_number;
+        }
+      } else {
+        RCLCPP_WARN(
+          get_logger(), "tooling_state.yaml names tool '%s' (file %d) which is not in "
+          "cobot_setup.yaml tools — kept until verified against the controller",
+          saved.name.c_str(), saved.number);
+      }
+      t = saved;
+      t.source = "state_file";
+      RCLCPP_INFO(
+        get_logger(), "active tool restored from %s: %s (tool file %d)",
+        tooling_state_path_.c_str(), t.name.c_str(), t.number);
+    } else if (std::filesystem::exists(tooling_state_path_)) {
+      RCLCPP_WARN(get_logger(), "ignoring %s: %s", tooling_state_path_.c_str(), err.c_str());
+    }
+  }
+  setActiveTool(t);
+  RCLCPP_INFO(
+    get_logger(), "active tool: %s (tool file %d, %s) — every pose is expressed in this tool "
+    "file unless the goal names another", t.name.c_str(), t.number, t.source.c_str());
+}
+
+void CobotControlNode::onSetActiveTool(
+  cobot_interfaces::srv::SetActiveTool::Request::ConstSharedPtr req,
+  cobot_interfaces::srv::SetActiveTool::Response::SharedPtr res)
+{
+  auto reject = [&](int32_t code, const std::string & m) {
+      const ActiveTool cur = activeTool();
+      res->success = false;
+      res->status_code = code;
+      res->message = m;
+      res->tool_number = cur.number;
+      res->name = cur.name;
+      res->verified = cur.verified;
+      RCLCPP_WARN(get_logger(), "set_active_tool rejected: %s", m.c_str());
+    };
+
+  if (busy_) {reject(3, "a motion goal is executing — the tool cannot change mid-move"); return;}
+
+  std::string name = req->name;
+  int32_t number = req->tool_number;
+  bool configured = false;
+  std::string configured_list;
+  {
+    std::lock_guard<std::mutex> lock(setup_mtx_);
+    for (const auto & b : setup_.tools) {
+      if (b.name == "none") {continue;}
+      configured_list += (configured_list.empty() ? "" : ", ") + b.name;
+    }
+    if (!name.empty()) {
+      if (name == "none") {
+        number = 0;
+        configured = true;
+      } else if (const ToolBinding * b = setup_.findTool(name)) {
+        number = b->tool_number;
+        configured = true;
+      } else {
+        reject(2, "unknown tool name '" + name + "' (cobot_setup.yaml tools: none, " +
+          configured_list + ")");
+        return;
+      }
+    } else {
+      if (number < 0 || number > 63) {reject(2, "name or tool_number 0-63 required"); return;}
+      if (const ToolBinding * b = setup_.findToolByNumber(number)) {
+        name = b->name;
+        configured = true;
+      } else if (number == 0) {
+        name = "none";
+        configured = true;
+      }
+    }
+  }
+
+  bool loaded = false, verified = false, identity = false;
+  std::string cnd_name;
+  {
+    std::lock_guard<std::mutex> lock(profile_mtx_);
+    loaded = profile_.loaded && !profile_.tools.empty();
+    if (const ToolFileData * tf = profile_.findTool(number)) {
+      verified = true;
+      identity = tf->isIdentity();
+      cnd_name = tf->name;
+    }
+  }
+  if (name.empty()) {name = !cnd_name.empty() ? cnd_name : "tool" + std::to_string(number);}
+
+  if (loaded && !verified && !req->force) {
+    reject(4, "tool file " + std::to_string(number) +
+      " is not in the controller's TOOL.CND (set force to override)");
+    return;
+  }
+  if (!loaded && !configured) {
+    reject(4, "controller profile not loaded: only 'none' and the tools configured in "
+      "cobot_setup.yaml (" + configured_list + ") can be selected");
+    return;
+  }
+
+  ActiveTool t;
+  t.name = name;
+  t.number = number;
+  t.source = "service";
+  t.verified = verified;
+  setActiveTool(t);
+
+  std::string msg = "active tool -> " + name + " (tool file " + std::to_string(number) + ")";
+  if (identity && number != 0) {msg += " — WARNING: that tool file has an identity TCP";}
+  if (!verified) {msg += " — not verified against TOOL.CND";}
+  if (!configured) {msg += " — no cobot_setup.yaml tools entry (picks will be refused)";}
+  int32_t code = 0;
+  if (!tooling_state_path_.empty()) {
+    std::string err;
+    if (!ToolingState::save(tooling_state_path_, t, err)) {
+      code = 5;
+      msg += "; NOT persisted: " + err;
+    }
+  } else {
+    msg += "; not persisted (runtime_dir unset)";
+  }
+  publishProfile();
+  RCLCPP_WARN(get_logger(), "%s", msg.c_str());
+
+  res->success = true;
+  res->status_code = code;
+  res->message = msg;
+  res->tool_number = number;
+  res->name = name;
+  res->verified = verified;
+}
+
+void CobotControlNode::onConvertPose(
+  cobot_interfaces::srv::ConvertPose::Request::ConstSharedPtr req,
+  cobot_interfaces::srv::ConvertPose::Response::SharedPtr res)
+{
+  const int32_t active = active_tool_number_.load();
+  const int32_t from = req->from_tool < 0 ? active : req->from_tool;
+  const int32_t to = req->to_tool < 0 ? active : req->to_tool;
+  res->from_tool = from;
+  res->to_tool = to;
+  res->x = req->x; res->y = req->y; res->z = req->z;
+  res->rx = req->rx; res->ry = req->ry; res->rz = req->rz;
+  if (from > 63 || to > 63) {fill(*res, RobotStatus{2, "tool numbers must be 0-63"}); return;}
+  if (!req->joints_deg.empty() && req->joints_deg.size() != 6) {
+    fill(*res, RobotStatus{2, "joints_deg must be empty or 6 values (S L U R B T)"});
+    return;
+  }
+  if (!robot_->isConnected()) {fill(*res, RobotStatus::notConnected()); return;}
+
+  const Pose in{req->x, req->y, req->z, req->rx, req->ry, req->rz};
+  Pose out;
+  std::vector<double> joints;
+  const std::vector<double> * jin = req->joints_deg.empty() ? nullptr : &req->joints_deg;
+  const RobotStatus st = robot_->convertPose(in, from, to, jin, out, joints);
+  if (st.ok()) {
+    res->x = out.x; res->y = out.y; res->z = out.z;
+    res->rx = out.rx; res->ry = out.ry; res->rz = out.rz;
+    res->joints_deg = joints;
+  }
+  fill(*res, st);
+}
+
+// ============================================================ controller profile
+
+void CobotControlNode::startProfileRead()
+{
+  if (profile_source_ == "fixture") {return;}
+  if (profile_loading_.exchange(true)) {return;}  // a read is already in flight
+  joinProfileThread();                             // previous read finished
+  std::lock_guard<std::mutex> lock(profile_thread_mtx_);
+  profile_thread_ = std::thread(
+    [this]() {
+      readProfileFromController();
+      profile_loading_ = false;
+    });
+}
+
+void CobotControlNode::readProfileFromController()
+{
+  ProfileSource src;
+  src.system_info = [this](std::string & model, std::string & version, std::string & err) {
+      const RobotStatus st = robot_->readSystemInfo(model, version);
+      if (!st.ok()) {err = st.text();}
+      return st.ok();
+    };
+  src.list_cnd = [this](std::vector<std::string> & names, std::string & err) {
+      const RobotStatus st = robot_->listConditionFiles(names);
+      if (!st.ok()) {err = st.text();}
+      return st.ok();
+    };
+  src.read_file = [this](const std::string & file, std::string & text, std::string & err) {
+      const RobotStatus st = robot_->readControllerFile(file, text);
+      if (!st.ok()) {
+        err = st.text();
+        int32_t rs7 = -1;
+        if (robot_->readRsParam(7, rs7).ok()) {
+          err += " (RS7=" + std::to_string(rs7) +
+            "; set RS7=2 on the pendant to allow file reads outside REMOTE mode)";
+        }
+      }
+      return st.ok();
+    };
+
+  RCLCPP_INFO(get_logger(), "reading controller profile (system info, %s, %s) — read-only",
+    profile_files_.tool_file.c_str(), profile_files_.uframe_file.c_str());
+  std::map<std::string, std::string> raw;
+  ControllerProfileData data = buildProfile(src, profile_files_, &raw);
+  if (profile_dump_) {dumpProfile(raw, data);}
+  installProfile(std::move(data), "controller");
+}
+
+void CobotControlNode::installProfile(ControllerProfileData data, const std::string & source)
+{
+  data.source = source;
+  {
+    std::lock_guard<std::mutex> lock(profile_mtx_);
+    profile_ = std::move(data);
+    ++profile_read_count_;
+  }
+  // Re-verify the active tool against what the controller actually has.
+  ActiveTool t = activeTool();
+  bool verified = false, identity = false, loaded = false;
+  size_t n_tools = 0, n_frames = 0, n_err = 0;
+  std::string model, version;
+  std::vector<std::string> errors;
+  {
+    std::lock_guard<std::mutex> lock(profile_mtx_);
+    loaded = profile_.loaded;
+    n_tools = profile_.tools.size();
+    n_frames = profile_.user_frames.size();
+    n_err = profile_.errors.size();
+    errors = profile_.errors;
+    model = profile_.model_name;
+    version = profile_.software_version;
+    if (const ToolFileData * tf = profile_.findTool(t.number)) {
+      verified = true;
+      identity = tf->isIdentity();
+    }
+  }
+  {
+    std::lock_guard<std::mutex> lock(tool_mtx_);
+    active_tool_.verified = verified;
+  }
+  RCLCPP_INFO(
+    get_logger(), "controller profile (%s): loaded=%d model='%s' version='%s' tools=%zu "
+    "user_frames=%zu errors=%zu", source.c_str(), loaded, model.c_str(), version.c_str(),
+    n_tools, n_frames, n_err);
+  for (const auto & e : errors) {RCLCPP_WARN(get_logger(), "profile: %s", e.c_str());}
+  if (loaded && n_tools > 0 && !verified) {
+    RCLCPP_WARN(
+      get_logger(), "active tool '%s' (tool file %d) is NOT in the controller's TOOL.CND",
+      t.name.c_str(), t.number);
+  } else if (identity && t.number != 0) {
+    RCLCPP_WARN(
+      get_logger(), "active tool '%s' (tool file %d) has an identity TCP on the controller",
+      t.name.c_str(), t.number);
+  }
+  publishProfile();
+}
+
+void CobotControlNode::dumpProfile(
+  const std::map<std::string, std::string> & raw, const ControllerProfileData & p)
+{
+  if (runtime_dir_.empty()) {return;}
+  try {
+    const std::filesystem::path dir = std::filesystem::path(runtime_dir_) / "controller_profile";
+    std::filesystem::create_directories(dir);
+    for (const auto & kv : raw) {
+      std::ofstream f(dir / kv.first, std::ios::trunc | std::ios::binary);
+      f << kv.second;
+    }
+    {
+      std::ofstream f(dir / "system_info.yaml", std::ios::trunc);
+      f << "model_name: \"" << p.model_name << "\"\n"
+        << "software_version: \"" << p.software_version << "\"\n"
+        << "read_at: \"" << isoTimestamp(p.read_at) << "\"\n"
+        << "robot_ip: \"" << robot_ip_ << "\"\n";
+    }
+    {
+      std::ofstream f(dir / "errors.txt", std::ios::trunc);
+      for (const auto & e : p.errors) {f << "error: " << e << "\n";}
+      for (const auto & w : p.warnings) {f << "warning: " << w << "\n";}
+    }
+    RCLCPP_INFO(get_logger(), "controller profile dumped to %s", dir.string().c_str());
+  } catch (const std::exception & e) {
+    RCLCPP_WARN(get_logger(), "profile dump failed: %s", e.what());
+  }
+}
+
+void CobotControlNode::publishProfile()
+{
+  if (!profile_pub_) {return;}
+  ControllerProfile msg;
+  ControllerProfileData p;
+  uint32_t count = 0;
+  {
+    std::lock_guard<std::mutex> lock(profile_mtx_);
+    p = profile_;
+    count = profile_read_count_;
+  }
+  const auto ns =
+    std::chrono::duration_cast<std::chrono::nanoseconds>(p.read_at.time_since_epoch()).count();
+  msg.header.stamp = ns > 0 ? rclcpp::Time(ns, RCL_SYSTEM_TIME) : now();
+  msg.read_count = count;
+  msg.loaded = p.loaded;
+  msg.source = p.source;
+  msg.robot_ip = robot_ip_;
+  msg.model_name = p.model_name;
+  msg.software_version = p.software_version;
+  for (const auto & t : p.tools) {
+    cobot_interfaces::msg::ToolFile m;
+    m.number = t.number;
+    m.name = t.name;
+    m.x = t.x; m.y = t.y; m.z = t.z; m.rx = t.rx; m.ry = t.ry; m.rz = t.rz;
+    m.weight_kg = t.weight_kg;
+    m.cog_mm = t.cog_mm;
+    m.inertia = t.inertia;
+    m.is_identity = t.isIdentity();
+    for (const auto & kv : t.extra) {
+      KeyValue e; e.key = kv.first; e.value = kv.second; m.extra.push_back(e);
+    }
+    msg.tools.push_back(m);
+  }
+  for (const auto & f : p.user_frames) {
+    cobot_interfaces::msg::UserFrame m;
+    m.number = f.number;
+    m.name = f.name;
+    m.tool_number = f.tool_number;
+    m.group = f.group;
+    m.pose = f.pose;
+    m.defined = f.defined();
+    for (const auto & kv : f.extra) {
+      KeyValue e; e.key = kv.first; e.value = kv.second; m.extra.push_back(e);
+    }
+    msg.user_frames.push_back(m);
+  }
+  msg.cnd_files = p.cnd_files;
+  msg.errors = p.errors;
+  msg.warnings = p.warnings;
+  if (!p.loaded && p.source == "none") {msg.errors.push_back("not connected");}
+  {
+    std::lock_guard<std::mutex> lock(setup_mtx_);
+    for (const auto & b : setup_.tools) {
+      msg.configured_tool_names.push_back(b.name);
+      msg.configured_tool_numbers.push_back(b.tool_number);
+    }
+  }
+  const ActiveTool t = activeTool();
+  msg.active_tool_number = t.number;
+  msg.active_tool_name = t.name;
+  msg.active_tool_source = t.source;
+  msg.active_tool_verified = t.verified;
+  profile_pub_->publish(msg);
+}
+
+void CobotControlNode::onReloadProfile(
+  Trigger::Request::ConstSharedPtr, Trigger::Response::SharedPtr res)
+{
+  if (profile_source_ == "fixture") {
+    std::map<std::string, std::string> raw;
+    installProfile(buildProfile(fixtureSource(profile_fixture_dir_), profile_files_, &raw), "fixture");
+    res->success = true;
+    res->message = "fixture profile reloaded from " + profile_fixture_dir_;
+    return;
+  }
+  if (!robot_->isConnected()) {
+    res->success = false;
+    res->message = "not connected";
+    return;
+  }
+  if (busy_) {
+    res->success = false;
+    res->message = "a motion goal is executing — reload the profile when idle";
+    return;
+  }
+  if (profile_loading_.exchange(true)) {
+    res->success = false;
+    res->message = "profile read already in progress";
+    return;
+  }
+  readProfileFromController();  // synchronous; reentrant group keeps the poll alive
+  profile_loading_ = false;
+  std::lock_guard<std::mutex> lock(profile_mtx_);
+  res->success = profile_.loaded;
+  res->message = "profile read #" + std::to_string(profile_read_count_) + ": " +
+    std::to_string(profile_.tools.size()) + " tool file(s), " +
+    std::to_string(profile_.user_frames.size()) + " user frame(s), " +
+    std::to_string(profile_.errors.size()) + " error(s)";
+  for (const auto & e : profile_.errors) {res->message += "; " + e;}
 }
 
 }  // namespace cobot_control

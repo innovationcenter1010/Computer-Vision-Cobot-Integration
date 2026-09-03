@@ -1,0 +1,17 @@
+# Park the arm at the remembered "hide" teach point (trajectories.json) —
+# 100% out of the camera's view. Served by cobot_operation, never
+# cobot_control directly: task_manager (pick_layer) sends this before every
+# scan instead of talking to cobot_control itself, so the move goes through
+# the same tool/trajectory ownership and busy-lock serialization as
+# /cobot/pick_can.
+#
+# Rejected (goal not accepted) if no "hide" point is configured yet
+# (/cobot/set_teach_point adds one) or the stored positions don't match the
+# active tool (same gate as /cobot/pick_can).
+#
+# Cancel policy: IMMEDIATE, same as /cobot/pick_can — the in-flight
+# MoveToPose is canceled (controller MotionStop).
+---
+bool success
+string message
+---

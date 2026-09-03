@@ -1,0 +1,21 @@
+# Run one model from models.yaml on the latest color frame (or on a file when
+# image_source is set). Served by cobot_detector (C++ / ONNX Runtime). Pixel
+# space only.
+#
+# model_id is a leaf key of models.yaml (runtime: or calibration: section).
+# Rejected (not aborted) when: unknown model_id, no color frame yet (only
+# without image_source), image_source does not exist, or a detection is
+# already running. The model is lazy-loaded on first use unless listed in the
+# detector's `preload` parameter.
+string model_id
+string image_source              # container path of an image file to run on
+                                 # instead of the latest camera frame; "" = live
+                                 # frame. Aborted if the file cannot be decoded.
+                                 # header.stamp of the result is then now().
+---
+bool success
+string message                   # why not (inference error / canceled)
+ObbDetectionArray detections     # header.stamp = the color frame the model ran on
+float32 inference_ms             # session.Run() only, excludes pre/post-processing
+---
+string stage                     # loading_model | preprocess | inference | postprocess

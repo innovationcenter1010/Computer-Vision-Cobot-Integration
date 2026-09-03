@@ -49,7 +49,9 @@ std::vector<IoAddress> parseIoMap(const YAML::Node & node, const std::string & w
   return out;
 }
 
-MotionProfile parseProfile(const YAML::Node & v, const std::string & where, MotionProfile base)
+MotionProfile parseProfile(
+  const YAML::Node & v, const std::string & where, MotionProfile base,
+  std::vector<std::string> & deprecations)
 {
   if (!v.IsMap()) {throw std::runtime_error(where + " must be a map");}
   if (v["interpolation"]) {
@@ -66,7 +68,13 @@ MotionProfile parseProfile(const YAML::Node & v, const std::string & where, Moti
   if (v["accel_ratio"]) {base.accel_ratio = v["accel_ratio"].as<double>();}
   if (v["decel_ratio"]) {base.decel_ratio = v["decel_ratio"].as<double>();}
   if (v["accuracy_mm"]) {base.accuracy_mm = v["accuracy_mm"].as<int>();}
-  if (v["tool_number"]) {base.tool_number = v["tool_number"].as<int>();}
+  if (v["tool_number"]) {
+    // Motion profiles describe HOW to move; the tool file (TCP) is the
+    // node-level active tool now (/cobot/set_active_tool). Accepted, ignored.
+    deprecations.push_back(
+      where + ".tool_number is ignored: the tool file comes from the active tool "
+      "(cobot_setup.yaml tools / /cobot/set_active_tool)");
+  }
   if (base.speed <= 0.0) {throw std::runtime_error(where + ".speed must be > 0");}
   if (base.accel_ratio < 20.0 || base.accel_ratio > 100.0 ||
     base.decel_ratio < 20.0 || base.decel_ratio > 100.0)
@@ -98,7 +106,36 @@ SetupConfig SetupConfig::load(const std::string & path)
       for (const auto & kv : profiles) {
         const std::string name = kv.first.as<std::string>();
         cfg.motion_profiles[name] =
-          parseProfile(kv.second, "motion_profiles." + name, MotionProfile{});
+          parseProfile(kv.second, "motion_profiles." + name, MotionProfile{}, cfg.deprecations);
+      }
+    }
+    if (root["tools"]) {
+      const YAML::Node tools = root["tools"];
+      if (!tools.IsMap()) {throw std::runtime_error("tools must be a map of name -> {tool_number, ...}");}
+      for (const auto & kv : tools) {
+        ToolBinding b;
+        b.name = kv.first.as<std::string>();
+        const std::string here = "tools." + b.name;
+        if (!kv.second.IsMap()) {throw std::runtime_error(here + " must be a map");}
+        const int n = kv.second["tool_number"] ? kv.second["tool_number"].as<int>() : 0;
+        if (n < 0 || n > 63) {throw std::runtime_error(here + ".tool_number must be 0-63");}
+        if (b.name == "none" && n != 0) {
+          throw std::runtime_error(here + ".tool_number must be 0 ('none' is the tool-0 default)");
+        }
+        b.tool_number = static_cast<int32_t>(n);
+        cfg.tools.push_back(b);
+      }
+    }
+    if (root["mount_yaw_offset_deg"]) {
+      cfg.mount_yaw_offset_deg = root["mount_yaw_offset_deg"].as<double>();
+    }
+    if (root["active_tool"]) {
+      const std::string a = root["active_tool"].IsNull() ? "" : root["active_tool"].as<std::string>();
+      if (!a.empty() && a != "none") {
+        if (!cfg.findTool(a)) {
+          throw std::runtime_error("active_tool '" + a + "' is not a key of tools");
+        }
+        cfg.active_tool_default = a;
       }
     }
   } catch (const std::runtime_error & e) {
@@ -117,6 +154,18 @@ const IoAddress * SetupConfig::findSensor(const std::string & name) const
 const IoAddress * SetupConfig::findOutput(const std::string & name) const
 {
   for (const auto & a : outputs) {if (a.name == name) {return &a;}}
+  return nullptr;
+}
+
+const ToolBinding * SetupConfig::findTool(const std::string & name) const
+{
+  for (const auto & t : tools) {if (t.name == name) {return &t;}}
+  return nullptr;
+}
+
+const ToolBinding * SetupConfig::findToolByNumber(int32_t number) const
+{
+  for (const auto & t : tools) {if (t.tool_number == number) {return &t;}}
   return nullptr;
 }
 

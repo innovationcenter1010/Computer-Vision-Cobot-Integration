@@ -4,7 +4,19 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Cobot Control Panel</title>
-    <link rel="stylesheet" href="/static/style.css?v=10">
+    <script>
+        // Stamp the theme on <html> before first paint (no flash of the wrong
+        // theme): stored choice, else the OS preference. app.js toggles it.
+        (function () {
+            let theme = null;
+            try { theme = localStorage.getItem("cobot.theme"); } catch (e) { /* storage unavailable */ }
+            if (theme !== "light" && theme !== "dark") {
+                theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            }
+            document.documentElement.dataset.theme = theme;
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/style.css?v=17">
 </head>
 
 <body>
@@ -12,6 +24,12 @@
         <div class="brand"><span class="mark">CB</span>Cobot Control Panel</div>
         <span id="ws_status" class="pill pill-neutral"><span class="dot"></span>connecting…</span>
         <div class="spacer"></div>
+        <a class="btn ghost sm" href="/dev">Dev Panel</a>
+        <button type="button" id="theme_toggle" class="btn ghost sm" onclick="toggleTheme()">theme</button>
+        <!-- Session recorder (web_node, server-side): captures every websocket
+             payload; stop exports a standalone replay HTML to /results. -->
+        <button type="button" id="record_btn" class="btn ghost sm" onclick="toggleRecording()">● Record</button>
+        <a id="record_link" class="pill lvl-ok" style="display:none"><span class="dot"></span>replay ready — download</a>
         <span class="eyebrow">System</span>
         <span id="overall_health" class="pill lvl-unknown"><span class="dot"></span>waiting for health monitor</span>
     </header>
@@ -22,13 +40,16 @@
             <!-- ===================== live feed ===================== -->
             <section class="card feed-card">
                 <div class="card-head">
-                    <h2>Live Feed</h2>
+                    <h2>Live <span>Feed</span></h2>
                     <span id="stream_status" class="pill pill-neutral"><span class="dot"></span>waiting for frames…</span>
+                    <span id="feed_telemetry" class="telemetry"></span>
                     <div class="spacer"></div>
-                    <button type="button" class="btn ghost sm"
-                            onclick="sendCommand(Receiver.VISION, VisionCommands.DETECT)">
-                        Scan (display only)
-                    </button>
+                    <!-- stream layout: split, or one stream at 3:1 (click a stream toggles it too) -->
+                    <span id="feed_layout" class="seg" role="group" aria-label="Stream layout">
+                        <button type="button" data-layout="split" onclick="setFeedLayout('split')">Split</button>
+                        <button type="button" data-layout="focus-color" onclick="setFeedLayout('focus-color')">Color</button>
+                        <button type="button" data-layout="focus-depth" onclick="setFeedLayout('focus-depth')">Depth</button>
+                    </span>
                     <button type="button" class="btn ghost sm"
                             onclick="sendCommand(Receiver.CAMERA, CameraCommands.SAVE)">
                         Save Images
@@ -44,25 +65,67 @@
                     </button>
                 </div>
 
-                <div class="vision-grid">
+                <!-- Calibration verification: where the marker was found at
+                     each pose (automatic twins) — see /vision/calibration_marker. -->
+                <div id="cal_marker_bar" class="cal-bar" style="display: none;">
+                    <span id="cal_marker_pill" class="pill pill-neutral"><span class="dot"></span>calibration</span>
+                    <span id="cal_marker_text" class="cal-text"></span>
+                    <div class="spacer"></div>
+                    <span class="legend cal-legend">
+                        <span><i class="sw sw-marker"></i>accepted marker</span>
+                        <span><i class="sw sw-marker-live"></i>detector box</span>
+                        <span><i class="sw sw-failed"></i>rejected</span>
+                    </span>
+                    <button type="button" class="btn ghost sm" onclick="clearCalibrationMarkers()">Clear</button>
+                </div>
+
+                <!-- Each frame carries its own telemetry: camera-side Hz / drops
+                     from camera_node's heartbeat (health summary), websocket
+                     rate + frame age measured here, and a 60 s Hz sparkline.
+                     The strips are pointer-transparent (manual marker click). -->
+                <div id="vision_grid" class="vision-grid">
                     <div class="feed">
                         <div class="feed-label">
-                            <span class="eyebrow">Color</span>
+                            <span class="name">Color</span>
                             <span id="color_meta" class="mono"></span>
                         </div>
-                        <div class="frame">
+                        <div id="color_frame" class="frame" title="click to focus this stream">
                             <img id="rgb_image" alt="No color frames yet">
                             <canvas id="rgb_overlay" class="overlay"></canvas>
+                            <div class="hud">
+                                <span id="color_hud_live" class="hud-live">no frames</span>
+                                <span>camera <b id="color_hud_hz">—</b> Hz</span>
+                                <span>age <b id="color_hud_age">—</b></span>
+                                <span class="right">drops <b id="color_hud_drops">—</b></span>
+                            </div>
+                            <div class="hud-foot">
+                                <canvas id="color_spark" width="240" height="44"></canvas>
+                                <span id="color_foot">camera Hz · waiting for health</span>
+                                <span id="color_foot_right" class="right"></span>
+                            </div>
+                            <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
                         </div>
                     </div>
 
                     <div class="feed">
                         <div class="feed-label">
-                            <span class="eyebrow">Depth</span>
+                            <span class="name">Depth</span>
                             <span id="depth_meta" class="mono"></span>
                         </div>
-                        <div class="frame">
+                        <div id="depth_frame" class="frame" title="click to focus this stream">
                             <img id="depth_image" alt="No depth frames yet">
+                            <div class="hud">
+                                <span id="depth_hud_live" class="hud-live">no frames</span>
+                                <span>camera <b id="depth_hud_hz">—</b> Hz</span>
+                                <span>age <b id="depth_hud_age">—</b></span>
+                                <span class="right">drops <b id="depth_hud_drops">—</b></span>
+                            </div>
+                            <div class="hud-foot">
+                                <canvas id="depth_spark" width="240" height="44"></canvas>
+                                <span id="depth_foot">camera Hz · waiting for health</span>
+                                <span id="depth_foot_right" class="right"></span>
+                            </div>
+                            <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
                         </div>
                     </div>
                 </div>
@@ -71,16 +134,27 @@
             <!-- ============= left column: control + pick monitor ============= -->
             <div class="column">
                 <section class="card robot-card">
-                    <div class="card-head"><h2>Robot Control</h2></div>
+                    <div class="card-head"><h2>Robot <span>Control</span></h2></div>
+
+                    <!-- Derived capability (task_manager /task/system_state):
+                         one overall pill + the individual facts behind it. -->
+                    <div class="sysline">
+                        <span class="eyebrow">Capability</span>
+                        <span id="capability_pill" class="pill pill-neutral"><span class="dot"></span>waiting…</span>
+                    </div>
+                    <div id="system_dots" class="sysdots"></div>
 
                     <div class="row">
-                        <button type="button" class="btn"
-                                onclick="sendCommand(Receiver.COBOT, CobotCommands.START)">Start</button>
-                        <button type="button" class="btn ghost"
-                                onclick="sendCommand(Receiver.COBOT, CobotCommands.CALIBRATE)">Calibrate</button>
+                        <select id="workflow_select" class="select" aria-label="Workflow"
+                                onchange="onWorkflowSelected()">
+                            <option value="">waiting for task manager…</option>
+                        </select>
+                        <button type="button" id="workflow_start" class="btn"
+                                onclick="startSelectedWorkflow()">Start</button>
                         <button type="button" class="btn danger"
                                 onclick="sendCommand(Receiver.COBOT, CobotCommands.STOP)">Stop</button>
                     </div>
+                    <p id="workflow_description" class="status-line muted"></p>
                     <p id="robot_command_status" class="status-line"></p>
 
                     <div class="task">
@@ -99,7 +173,7 @@
 
                 <section class="card pick-card">
                     <div class="card-head">
-                        <h2>Pick Monitor</h2>
+                        <h2>Pick <span>Monitor</span></h2>
                         <span id="pick_summary" class="pill pill-neutral">no scan yet</span>
                         <div class="spacer"></div>
                         <span id="pick_gate" class="eyebrow"></span>
@@ -115,21 +189,101 @@
                 </section>
             </div>
 
-            <!-- ============= right column: system health ============= -->
-            <section class="card health-card">
-                <div class="card-head">
-                    <h2>System Health</h2>
-                    <div class="spacer"></div>
-                    <span id="health_age" class="pill pill-neutral">no summary yet</span>
-                </div>
-                <div id="health_list" class="health">
-                    <p class="muted">Waiting for /health/summary from the health monitor…</p>
-                </div>
-            </section>
+            <!-- ============= right column: cobot + tooling + system health ============= -->
+            <div class="column">
+                <!-- Live controller state from /cobot/state (cobot_control, 10 Hz,
+                     pushed at web_node.cobot_state_hz): robot-specific health and
+                     every joint position. Read-only. -->
+                <section class="card cobot-card">
+                    <div class="card-head">
+                        <h2>Cobot</h2>
+                        <span id="cobot_link_pill" class="pill lvl-unknown"><span class="dot"></span>waiting for /cobot/state</span>
+                        <div class="spacer"></div>
+                        <span id="cobot_age" class="mono"></span>
+                    </div>
+                    <div id="cobot_facts" class="sysdots"></div>
+                    <div id="cobot_alarms" class="alarms"></div>
+
+                    <div class="cobot-grid">
+                        <div>
+                            <div class="eyebrow">Joints</div>
+                            <div id="joint_list" class="joints">
+                                <p class="muted">no joint data yet</p>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="eyebrow">TCP pose <span id="pose_tool" class="mono"></span></div>
+                            <div id="pose_list" class="pose"></div>
+                            <div class="eyebrow io-head">I/O</div>
+                            <div id="cobot_io" class="sysdots"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- YRC1000 controller profile (read ONCE after connect, read-only)
+                     + the ACTIVE tool selector (/cobot/set_active_tool). -->
+                <section class="card tooling-card">
+                    <div class="card-head">
+                        <h2>Tooling</h2>
+                        <span id="tool_active_pill" class="pill pill-neutral"><span class="dot"></span>waiting…</span>
+                        <div class="spacer"></div>
+                        <span id="tool_cal_pill" class="pill pill-neutral sm" title="tool file the camera calibration was captured with"><span class="dot"></span>cal: ?</span>
+                    </div>
+                    <p id="tool_controller" class="status-line mono muted">no controller profile yet</p>
+                    <div id="tool_errors" class="sysdots"></div>
+
+                    <div class="row">
+                        <select id="tool_select" class="select" aria-label="Active tool"
+                                onchange="onToolSelected()">
+                            <option value="">waiting for cobot_control…</option>
+                        </select>
+                        <button type="button" id="tool_apply" class="btn"
+                                onclick="applySelectedTool()" disabled>Apply</button>
+                    </div>
+                    <p id="tool_status" class="status-line"></p>
+
+                    <div class="row">
+                        <span id="tool_traj_pill" class="pill pill-neutral sm"
+                              title="remembered positions (trajectories.json) vs the active tool"><span class="dot"></span>positions: ?</span>
+                        <button type="button" id="tool_convert" class="btn ghost sm"
+                                onclick="convertTrajectories()" disabled>Convert saved positions</button>
+                    </div>
+
+                    <div class="tooltable-wrap">
+                        <table id="tool_table" class="tooltable" aria-label="Controller tool files">
+                            <thead>
+                                <tr><th>No</th><th>Name</th><th>X</th><th>Y</th><th>Z</th><th>Rx</th><th>Ry</th><th>Rz</th><th>kg</th><th></th></tr>
+                            </thead>
+                            <tbody><tr><td colspan="10" class="muted">no tool files read yet</td></tr></tbody>
+                        </table>
+                    </div>
+                    <details class="frames">
+                        <summary>User frames (<span id="tool_frames_count">0</span>) — read-only</summary>
+                        <div class="tooltable-wrap">
+                            <table id="tool_frames" class="tooltable" aria-label="Controller user frames">
+                                <thead><tr><th>No</th><th>Name</th><th>Tool</th><th>X</th><th>Y</th><th>Z</th><th>Rx</th><th>Ry</th><th>Rz</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </details>
+                    <p id="tool_pose" class="status-line mono muted"></p>
+                </section>
+
+                <section class="card health-card">
+                    <div class="card-head">
+                        <h2>System <span>Health</span></h2>
+                        <div class="spacer"></div>
+                        <span id="health_age" class="pill pill-neutral">no summary yet</span>
+                    </div>
+                    <div id="health_list" class="health">
+                        <p class="muted">Waiting for /health/summary from the health monitor…</p>
+                    </div>
+                </section>
+            </div>
 
         </div>
     </main>
 
-    <script type="module" src="/static/app.js?v=8"></script>
+    <script type="module" src="/static/app.js?v=19"></script>
 </body>
 </html>

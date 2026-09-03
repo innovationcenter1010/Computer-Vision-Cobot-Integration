@@ -14,11 +14,10 @@ setup(
     zip_safe=True,
     maintainer="james-t-smith",
     maintainer_email="innovationcenter1010@gmail.com",
-    description="YOLO-OBB detection (yolo_node) and pixel-to-robot-space localization (localization_node).",
+    description="Pixel-to-robot-space localization (localization_node): Scan action, calibration math, depth checks.",
     license="MIT",
     entry_points={
         "console_scripts": [
-            "yolo_node = cobot_vision.yolo_node:main",
             "localization_node = cobot_vision.localization_node:main",
         ],
     },

@@ -1,0 +1,9 @@
+# Start one named workflow on task_manager. Ids come from the latched
+# /task/workflows list (WorkflowList). An empty id runs the node's
+# default_workflow parameter. Refused (success=false) when the workflow is
+# unknown, its check_ready gate fails (robot / servers not available, grid
+# not configured, ...) or another workflow is already running.
+string workflow
+---
+bool success
+string message

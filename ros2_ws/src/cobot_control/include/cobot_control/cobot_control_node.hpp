@@ -13,23 +13,34 @@
 //   srv     /cobot/set_motion_profile, /read_int_var, /write_int_var,
 //           /read_position_var, /write_position_var, /get_current_pose,
 //           /get_active_alarms
+//   srv     /cobot/set_active_tool   select the tool file (TCP) poses are
+//                                    expressed in; persisted in runtime_dir
+//   srv     /cobot/convert_pose      cart(tool A) -> joints -> cart(tool B)
+//                                    via the controller kinematics (no motion)
+//   srv     /cobot/reload_profile    re-read the controller profile (Trigger)
 //   topic   /cobot/state  (CobotState, poll rate)   everything read from the
 //                                                   controller, by name
 //   topic   /cobot/status (CobotStatus, latched)    disconnected/idle/busy/error
+//   topic   /cobot/profile (ControllerProfile, latched)  system info, tool
+//                          files, user frames — read ONCE per connect, READ-ONLY
 //   topic   /health/heartbeat
 //
 // Threading: MultiThreadedExecutor. The poll timer (exclusive group) is the
 // only periodic talker; the move loop runs in its own std::thread and waits
 // on the poll's condition variable instead of polling the controller itself;
 // services and action callbacks are reentrant so pause / stop / reads stay
-// serviceable mid-move. Every SDK call serialises on MotomanRobot's mutex.
+// serviceable mid-move. The profile read (multi-packet file transfers) runs
+// in its own one-shot thread after connect so the poll is not frozen. Every
+// SDK call serialises on MotomanRobot's mutex.
 
 #include <atomic>
 #include <condition_variable>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -38,20 +49,25 @@
 #include "cobot_interfaces/action/move_to_pose.hpp"
 #include "cobot_interfaces/msg/cobot_state.hpp"
 #include "cobot_interfaces/msg/cobot_status.hpp"
+#include "cobot_interfaces/msg/controller_profile.hpp"
 #include "cobot_interfaces/msg/heartbeat.hpp"
+#include "cobot_interfaces/srv/convert_pose.hpp"
 #include "cobot_interfaces/srv/get_active_alarms.hpp"
 #include "cobot_interfaces/srv/get_current_pose.hpp"
 #include "cobot_interfaces/srv/motion_stop.hpp"
 #include "cobot_interfaces/srv/read_int_var.hpp"
 #include "cobot_interfaces/srv/read_io_bit.hpp"
 #include "cobot_interfaces/srv/read_position_var.hpp"
+#include "cobot_interfaces/srv/set_active_tool.hpp"
 #include "cobot_interfaces/srv/set_motion_profile.hpp"
 #include "cobot_interfaces/srv/set_output_bit.hpp"
 #include "cobot_interfaces/srv/write_int_var.hpp"
 #include "cobot_interfaces/srv/write_position_var.hpp"
 
+#include "cobot_control/controller_profile.hpp"
 #include "cobot_control/motoman_robot.hpp"
 #include "cobot_control/setup_config.hpp"
+#include "cobot_control/tooling_state.hpp"
 
 namespace cobot_control
 {
@@ -67,6 +83,7 @@ private:
   using GoalHandle = rclcpp_action::ServerGoalHandle<MoveToPose>;
   using CobotState = cobot_interfaces::msg::CobotState;
   using CobotStatus = cobot_interfaces::msg::CobotStatus;
+  using ControllerProfile = cobot_interfaces::msg::ControllerProfile;
   using Trigger = std_srvs::srv::Trigger;
 
   // ---- poll / connection supervision ----
@@ -77,16 +94,34 @@ private:
   void publishStatus(uint8_t state, const std::string & detail, bool force = false);
   void heartbeatTick();
 
+  // ---- controller profile (read once per connect, read-only) ----
+  void startProfileRead();            // one-shot thread; idempotent
+  void readProfileFromController();   // body of that thread / reload service
+  void installProfile(ControllerProfileData data, const std::string & source);
+  void dumpProfile(const std::map<std::string, std::string> & raw, const ControllerProfileData & p);
+  void publishProfile();
+  void joinProfileThread();
+
+  // ---- active tool ----
+  void initActiveTool();
+  ActiveTool activeTool() const;
+  void setActiveTool(const ActiveTool & tool);
+
   // ---- MoveToPose ----
   rclcpp_action::GoalResponse handleGoal(
     const rclcpp_action::GoalUUID & uuid, MoveToPose::Goal::ConstSharedPtr goal);
   rclcpp_action::CancelResponse handleCancel(std::shared_ptr<GoalHandle> gh);
   void handleAccepted(std::shared_ptr<GoalHandle> gh);
   void executeMove(std::shared_ptr<GoalHandle> gh);
-  MotionProfile resolveProfile(const MoveToPose::Goal & goal, std::string & profile_name);
+  MotionProfile resolveProfile(
+    const MoveToPose::Goal & goal, std::string & profile_name, int32_t & tool_number,
+    double & mount_yaw_offset_deg);
   void holdMotion();     // pause: MotionStop(false) or SetHold(ON)
   void releaseMotion();  // resume: MotionStart() or SetHold(OFF)
   void joinMoveThread();
+  // Margin check against joint_limits_min/max_deg (S L U R B T). Empty
+  // limits = check skipped (rely on the controller's IK alone).
+  bool jointLimitsOk(const std::vector<double> & joints_deg, std::string & detail) const;
 
   // ---- services ----
   bool resolveIo(
@@ -123,6 +158,13 @@ private:
   void onGetActiveAlarms(
     cobot_interfaces::srv::GetActiveAlarms::Request::ConstSharedPtr req,
     cobot_interfaces::srv::GetActiveAlarms::Response::SharedPtr res);
+  void onSetActiveTool(
+    cobot_interfaces::srv::SetActiveTool::Request::ConstSharedPtr req,
+    cobot_interfaces::srv::SetActiveTool::Response::SharedPtr res);
+  void onConvertPose(
+    cobot_interfaces::srv::ConvertPose::Request::ConstSharedPtr req,
+    cobot_interfaces::srv::ConvertPose::Response::SharedPtr res);
+  void onReloadProfile(Trigger::Request::ConstSharedPtr, Trigger::Response::SharedPtr res);
   void onPause(Trigger::Request::ConstSharedPtr, Trigger::Response::SharedPtr res);
   void onResume(Trigger::Request::ConstSharedPtr, Trigger::Response::SharedPtr res);
   void onClearTrajectory(Trigger::Request::ConstSharedPtr, Trigger::Response::SharedPtr res);
@@ -134,6 +176,12 @@ private:
   // ---- parameters ----
   std::string robot_ip_;
   std::string setup_file_;
+  std::string runtime_dir_;         // tooling_state.yaml + controller_profile/ dumps
+  std::string profile_source_;      // "controller" | "fixture"
+  std::string profile_fixture_dir_;
+  ProfileFiles profile_files_;
+  bool profile_dump_{true};
+  bool poll_joints_{true};
   double poll_period_s_{0.1};
   double connect_retry_period_s_{1.0};
   double motion_timeout_s_{100.0};
@@ -141,12 +189,36 @@ private:
   bool check_reachability_{true};
   bool pendant_messages_{true};
   double heartbeat_period_s_{2.0};
+  // Motion wait (ported from the fork's hardware-tested cobot_driver).
+  double motion_poll_period_s_{0.05};
+  double motion_start_grace_s_{3.0};
+  double motion_feedback_hz_{5.0};
+  // Joint limits are live-tunable (dev panel → set_parameters): the callback
+  // below rewrites them under joint_limits_mtx_ while motions read a copy.
+  double joint_limit_margin_deg_{5.0};
+  std::vector<double> joint_limits_min_deg_;
+  std::vector<double> joint_limits_max_deg_;
+  mutable std::mutex joint_limits_mtx_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_;
 
   // ---- hardware ----
   std::unique_ptr<MotomanRobot> robot_;
   SetupConfig setup_;
   mutable std::mutex setup_mtx_;  // motion_profiles are editable at runtime
-  int32_t pose_tool_number_{0};   // tool file used for the polled pose
+
+  // ---- active tool (the coordinate system poses are expressed in) ----
+  ActiveTool active_tool_;
+  mutable std::mutex tool_mtx_;
+  std::atomic<int32_t> active_tool_number_{0};  // lock-free mirror for the hot paths
+  std::string tooling_state_path_;
+
+  // ---- controller profile ----
+  ControllerProfileData profile_;
+  mutable std::mutex profile_mtx_;
+  uint32_t profile_read_count_{0};
+  std::atomic<bool> profile_loading_{false};
+  std::thread profile_thread_;
+  std::mutex profile_thread_mtx_;
 
   // ---- callback groups / timers ----
   rclcpp::CallbackGroup::SharedPtr poll_group_;
@@ -162,8 +234,8 @@ private:
   std::condition_variable poll_cv_;
   uint64_t poll_seq_{0};
   CobotState last_state_;
-  MotionProgress last_progress_;
-  RobotStatus last_progress_status_;
+  // Motion progress is read fresh by the move loop itself; the poll does not
+  // cache it (a stale sample once produced a false "reached pose").
 
   // ---- motion state ----
   std::atomic<bool> busy_{false};
@@ -176,6 +248,7 @@ private:
   // ---- publishers ----
   rclcpp::Publisher<CobotStatus>::SharedPtr status_pub_;
   rclcpp::Publisher<CobotState>::SharedPtr state_pub_;
+  rclcpp::Publisher<ControllerProfile>::SharedPtr profile_pub_;
   rclcpp::Publisher<cobot_interfaces::msg::Heartbeat>::SharedPtr hb_pub_;
   std::mutex status_mtx_;
   uint8_t last_status_state_{255};
@@ -192,6 +265,9 @@ private:
   rclcpp::Service<cobot_interfaces::srv::WritePositionVar>::SharedPtr write_position_var_srv_;
   rclcpp::Service<cobot_interfaces::srv::GetCurrentPose>::SharedPtr get_current_pose_srv_;
   rclcpp::Service<cobot_interfaces::srv::GetActiveAlarms>::SharedPtr get_active_alarms_srv_;
+  rclcpp::Service<cobot_interfaces::srv::SetActiveTool>::SharedPtr set_active_tool_srv_;
+  rclcpp::Service<cobot_interfaces::srv::ConvertPose>::SharedPtr convert_pose_srv_;
+  rclcpp::Service<Trigger>::SharedPtr reload_profile_srv_;
   rclcpp::Service<Trigger>::SharedPtr pause_srv_;
   rclcpp::Service<Trigger>::SharedPtr resume_srv_;
   rclcpp::Service<Trigger>::SharedPtr clear_trajectory_srv_;

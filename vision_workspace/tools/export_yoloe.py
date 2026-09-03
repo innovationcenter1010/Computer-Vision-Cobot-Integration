@@ -6,7 +6,7 @@ working there); only the paths, the default input shape and the docs differ.
 
 Dev-PC tool ONLY: never runs inside the cobot container, never in CI, never
 inside colcon. Run it from vision_workspace/.venv (see ../README.md). The output lands in
-vision_workspace/models/<name>/ next to the other exported ONNX models and
+runtime_models/<name>/ next to the other exported ONNX models and
 is NOT wired into any node yet.
 
 Flow:
@@ -15,7 +15,7 @@ Flow:
      embeddings (set_classes + get_text_pe) — the text encoder is discarded at
      export.
   3. Export ONNX (opset 17), static batch 1, static imgsz.
-  4. Write vision_workspace/models/<name>/<name>.onnx + manifest.yaml (sha256,
+  4. Write runtime_models/<name>/<name>.onnx + manifest.yaml (sha256,
      real tensor names/shapes read back from the ONNX, class list, decode
      parameters).
 
@@ -26,7 +26,7 @@ with no letterbox padding. The G1 uses 544x960 for its 16:9 head camera — do
 not copy that shape here.
 
 Usage (from vision_workspace/, inside .venv):
-  python tools/export_yoloe.py                          # classes_cobot.yaml -> models/yoloe_cobot_v1/
+  python tools/export_yoloe.py                          # classes_cobot.yaml -> runtime_models/yoloe_cobot_v1/
   python tools/export_yoloe.py --prompts "red can" "green light" "gripper"
   python tools/export_yoloe.py --imgsz 640 640          # square, if ever needed
   python tools/export_yoloe.py --name yoloe_cobot_v2 --checkpoint yoloe-11m-seg.pt
@@ -39,7 +39,7 @@ from pathlib import Path
 
 import yaml
 
-from _paths import MODELS_DIR  # vision_workspace/models: ONNX only
+from _paths import MODELS_DIR  # runtime_models/: ONNX only
 
 HERE = Path(__file__).resolve().parent
 
@@ -96,7 +96,7 @@ def main() -> None:
     ap.add_argument("--checkpoint", default="yoloe-11s-seg.pt",
                     help="YOLOE checkpoint (auto-downloaded by ultralytics)")
     ap.add_argument("--name", default="yoloe_cobot_v1",
-                    help="model name -> vision_workspace/models/<name>/<name>.onnx")
+                    help="model name -> runtime_models/<name>/<name>.onnx")
     ap.add_argument("--imgsz", type=int, nargs="+", default=[480, 640],
                     metavar=("H", "W"),
                     help="input size as 'H W' (or one value for square). "
@@ -104,7 +104,7 @@ def main() -> None:
                          "exactly (no letterbox padding). Both must be "
                          "multiples of 32.")
     ap.add_argument("--out", type=Path, default=MODELS_DIR,
-                    help="output root (default: vision_workspace/models)")
+                    help="output root (default: runtime_models/)")
     ap.add_argument("--conf-threshold", type=float, default=0.35)
     ap.add_argument("--nms-iou", type=float, default=0.5)
     args = ap.parse_args()
@@ -214,8 +214,8 @@ def main() -> None:
     print(f"[export] input  {inputs[0]['name']} {inputs[0]['shape']}")
     for o in outputs:
         print(f"[export] output {o['name']} {o['shape']}")
-    print("[export] done — model stored under vision_workspace/models/ "
-          "(bind-mounted into the container at /ws/vision_workspace/models); "
+    print("[export] done — model stored under runtime_models/ "
+          "(bind-mounted into the container at /ws/runtime_models); "
           "not wired into any node yet")
 
 

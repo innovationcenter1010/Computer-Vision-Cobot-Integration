@@ -1,0 +1,16 @@
+# cobot_operation: overwrite points.<key>[index] of trajectories.json with
+# the CURRENT pose + joints from /cobot/state (pose_tool_number must equal
+# active_tool_number and every other stored point must already be in that
+# tool's frame).
+string key
+int32 index 0
+---
+bool success
+string message
+int32 tool_number
+float64 x
+float64 y
+float64 z
+float64 rx
+float64 ry
+float64 rz

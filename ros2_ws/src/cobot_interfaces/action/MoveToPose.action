@@ -4,7 +4,10 @@
 #
 # Motion profile: named profile from cobot_setup.yaml (empty = "default");
 # the numeric fields below override it per goal when non-zero / >= 0.
-# tool_number -1 = the profile's tool file.
+# tool_number -1 = the ACTIVE tool file (/cobot/set_active_tool, shown in
+# CobotState.active_tool_number). Set >= 0 only for poses stored with an
+# explicit coordinate system (remembered positions carry their tool).
+# Motion profiles no longer carry a tool_number.
 #
 # Cancel policy: cancel is IMMEDIATE — MotionStop(true) on the controller,
 # trajectory cleared, goal CANCELED. The arm can end anywhere along the

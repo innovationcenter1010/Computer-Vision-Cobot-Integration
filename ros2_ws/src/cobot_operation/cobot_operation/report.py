@@ -47,10 +47,14 @@ class OperationReport:
         return job
 
     def add_sensor_assert(self, name: str, expected: bool, actual: bool) -> bool:
+        """Records the assert for the report/UI. A mismatch is NEVER, by
+        itself, appended to `failures` here — a raw IO bit is not ground
+        truth for a pick's outcome (misaligned/flaky sensors happen; the real
+        post-pick confirmation is the workflow's vision depth check). Whether
+        a mismatch should fail the job is the caller's call, gated by
+        `PickConfig.sensor_assert_authoritative`."""
         passed = expected == actual
         self.sensor_asserts.append(SensorAssert(name, expected, actual, passed))
-        if not passed:
-            self.failures.append(f"sensor {name}: expected {expected}, got {actual}")
         return passed
 
     def mark_failed(self, note: str) -> None:

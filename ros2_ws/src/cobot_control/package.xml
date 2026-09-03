@@ -8,6 +8,8 @@
     third_party/). Hardware primitives only: MoveToPose action (progress
     feedback, immediate cancel, pause/resume), IO / variable / alarm services,
     and a 10 Hz /cobot/state poll of everything read from the controller.
+    Reads the controller profile (system info, TOOL.CND, UFRAME.CND) once
+    per connect - strictly read-only - and owns the active tool selection.
     Choreography lives in cobot_operation; sequencing in cobot_tasks.
     Replaces the pybind extension motoman_cpp (retired, kept for scripting).
   </description>
@@ -22,6 +24,8 @@
   <depend>std_srvs</depend>
   <depend>cobot_interfaces</depend>
   <depend>yaml-cpp</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

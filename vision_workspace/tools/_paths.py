@@ -11,7 +11,7 @@ DATASETS_DIR = VISION_WS / "datasets"            # labelled training data
 WEIGHTS_DIR = VISION_WS / "weights"              # trained .pt (gitignored)
 BASE_WEIGHTS_DIR = WEIGHTS_DIR / "base"          # pretrained yolo26*.pt starting points
 TRAINING_RUNS_DIR = VISION_WS / "training_runs"  # ultralytics run output (gitignored)
-MODELS_DIR = VISION_WS / "models"                # ONNX exports ONLY — what the container consumes
+MODELS_DIR = VISION_WS.parent / "runtime_models"  # ONNX exports ONLY — what the container consumes (/ws/runtime_models)
 
 
 def pick_device(requested: str = "auto") -> str:

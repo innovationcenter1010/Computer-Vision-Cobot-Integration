@@ -1,6 +1,7 @@
 #include "cobot_control/motoman_robot.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 
@@ -19,6 +20,13 @@ std::string Pose::str() const
   o << std::fixed << std::setprecision(1)
     << "(" << x << ", " << y << ", " << z << ", " << rx << ", " << ry << ", " << rz << ")";
   return o.str();
+}
+
+double normalizeDeg180(double deg)
+{
+  double wrapped = std::fmod(deg + 180.0, 360.0);
+  if (wrapped < 0.0) {wrapped += 360.0;}
+  return wrapped - 180.0;
 }
 
 namespace
@@ -197,6 +205,83 @@ RobotStatus MotomanRobot::readCurrentPose(int32_t tool_number, Pose & out)
     });
 }
 
+RobotStatus MotomanRobot::readCurrentJoints(std::vector<double> & joints_deg)
+{
+  return withController(
+    [&](MotomanController & c) {
+      PositionData d{};
+      StatusInfo st = c.ControlGroup->ReadPositionData(
+        ControlGroupId::R1, CoordinateType::JointDegrees, 0, 0, d);
+      if (!st.IsOk()) {return RobotStatus::from(st);}
+      joints_deg.assign(d.axisData.begin(), d.axisData.begin() + 6);
+      return RobotStatus::okay();
+    });
+}
+
+RobotStatus MotomanRobot::readCurrentPoseAndJoints(
+  int32_t tool_number, Pose & pose, std::vector<double> & joints_deg)
+{
+  return withController(
+    [&](MotomanController & c) {
+      PositionData d{};
+      StatusInfo st = c.ControlGroup->ReadPositionData(
+        ControlGroupId::R1, CoordinateType::BaseCoordinate, 0,
+        static_cast<UINT8>(tool_number < 0 ? 0 : tool_number), d);
+      if (!st.IsOk()) {return RobotStatus::from(st);}
+      pose = fromPositionData(d);
+      PositionData j{};
+      st = c.ControlGroup->ReadPositionData(
+        ControlGroupId::R1, CoordinateType::JointDegrees, 0, 0, j);
+      joints_deg.clear();
+      if (st.IsOk()) {joints_deg.assign(j.axisData.begin(), j.axisData.begin() + 6);}
+      return RobotStatus::okay();  // the pose is valid even when the joint read failed
+    });
+}
+
+// ---------------------------------------------------------------- profile (read-only)
+
+RobotStatus MotomanRobot::readSystemInfo(std::string & model_name, std::string & software_version)
+{
+  return withController(
+    [&](MotomanController & c) {
+      SystemInfoData d{};
+      StatusInfo st = c.Status->ReadSystemInformation(SystemInfoId::R1, d);
+      if (!st.IsOk()) {return RobotStatus::from(st);}
+      model_name = d.modelName;
+      software_version = d.softwareVersion;
+      return RobotStatus::okay();
+    });
+}
+
+RobotStatus MotomanRobot::listConditionFiles(std::vector<std::string> & names)
+{
+  return withController(
+    [&](MotomanController & c) {
+      names.clear();
+      return RobotStatus::from(c.Files->ListFiles(FileType::Condition_CND, names, true));
+    });
+}
+
+RobotStatus MotomanRobot::readControllerFile(const std::string & file_name, std::string & text)
+{
+  return withController(
+    [&](MotomanController & c) {
+      text.clear();
+      return RobotStatus::from(c.Files->SaveFromControllerToString(file_name, text));
+    });
+}
+
+RobotStatus MotomanRobot::readRsParam(int32_t number, int32_t & value)
+{
+  return withController(
+    [&](MotomanController & c) {
+      INT32 v = 0;
+      StatusInfo st = c.Status->ReadSystemParam(SystemParameterType::RS, number, v);
+      value = v;
+      return RobotStatus::from(st);
+    });
+}
+
 RobotStatus MotomanRobot::activeAlarms(std::vector<Alarm> & out)
 {
   return withController(
@@ -248,11 +333,25 @@ RobotStatus MotomanRobot::pendantMessage(const std::string & text)
 
 // ---------------------------------------------------------------- motion
 
-RobotStatus MotomanRobot::addPoint(const Pose & pose, const MotionProfile & profile)
+RobotStatus MotomanRobot::addPoint(
+  const Pose & pose, const MotionProfile & profile, int32_t tool_number)
 {
   return withController(
     [&](MotomanController & c) {
-      const PositionData target = toPositionData(pose, profile.tool_number);
+      PositionData target = toPositionData(pose, tool_number);
+      // Carry the arm's LIVE figure onto the queued point. Left default-
+      // constructed (the pybind-era behaviour) every point asserts
+      // Front/Upper/Flip regardless of the real pose — the fork's prime
+      // suspect for mid-motion interpolation alarm 4684, since a controller
+      // set up for the motion manager (S2C430=1) solves cartesian targets by
+      // figure (cobot-vision-development ymconnect_robot.cpp, queue_point).
+      {
+        PositionData current{};
+        const StatusInfo fig_st = c.ControlGroup->ReadPositionData(
+          ControlGroupId::R1, CoordinateType::BaseCoordinate, 0,
+          static_cast<UINT8>(tool_number < 0 ? 0 : tool_number), current);
+        if (fig_st.IsOk()) {target.figure = current.figure;}
+      }
       MotionAccelDecel attrs{};
       attrs.accelRatio = profile.accel_ratio;
       attrs.decelRatio = profile.decel_ratio;
@@ -304,35 +403,116 @@ RobotStatus MotomanRobot::motionProgress(MotionProgress & out)
       if (!st.IsOk()) {return RobotStatus::from(st);}
       out.percent = pct;
       out.steps_remaining = steps;
-      // Same rule the pybind wrapper used (HasReachedTarget).
-      out.reached = (pct >= 99.0 && steps <= 1) || steps == 0;
       return RobotStatus::okay();
     });
 }
 
 RobotStatus MotomanRobot::isReachable(
-  const Pose & pose, int32_t tool_number, bool & reachable, std::string & why)
+  const Pose & pose, int32_t tool_number, bool & reachable, std::string & why,
+  std::vector<double> & joints_deg_out)
 {
   return withController(
     [&](MotomanController & c) {
-      PositionData current{};
+      // Seed the solver from where the arm actually is — in JOINT DEGREES.
+      // ConvertPositionFromCartesian documents prevAngle as joint angles in
+      // degrees; the pybind-era code passed pulse counts (~1e5 where degrees
+      // are ~1e2), so the solver chose its IK branch from a seed nowhere
+      // near the arm. Fixed per the fork's pose_validator.cpp.
+      PositionData seed{};
       StatusInfo st = c.ControlGroup->ReadPositionData(
-        ControlGroupId::R1, CoordinateType::Pulse, 0, 0, current);
-      if (!st.IsOk()) {return RobotStatus::from(st);}
+        ControlGroupId::R1, CoordinateType::JointDegrees, 0, 0, seed);
+      if (!st.IsOk()) {
+        return RobotStatus{st.StatusCode,
+          "could not read the current joint angles to seed the solver: " + st.Message};
+      }
 
       PositionData target = toPositionData(pose, tool_number);
+      // The Kinematics interface does NOT accept BaseCoordinate — it returns
+      // status 131095 "did you mean robot coordinate?" (verified on hardware
+      // in the fork) while AddPointToTrajectory wants exactly BaseCoordinate.
+      // With no base/travel axis the two frames coincide, so validating in
+      // RobotCoordinate what will be queued in BaseCoordinate is safe.
+      target.coordinateType = CoordinateType::RobotCoordinate;
+      // Carry the live figure so the check asks for the branch the arm is on
+      // (only consulted when the controller solves by Figure; costs one read).
+      {
+        PositionData current{};
+        if (c.ControlGroup->ReadPositionData(
+            ControlGroupId::R1, CoordinateType::RobotCoordinate, 0,
+            static_cast<UINT8>(tool_number < 0 ? 0 : tool_number), current).IsOk())
+        {
+          target.figure = current.figure;
+        }
+      }
+
       PositionData joints{};
       st = c.Kinematics->ConvertPositionFromCartesian(
         ControlGroupId::R1, target, KinematicConversions::CartesianPosToJointAngle,
-        KinematicType::Delta, current.axisData, joints);
+        KinematicType::Delta, seed.axisData, joints);
       if (!st.IsOk()) {
+        // The controller's own IK found no solution — exactly the condition
+        // that later becomes interpolation alarm 4684 mid-motion.
         reachable = false;
-        why = "IK failed: [" + std::to_string(st.StatusCode) + "] " + st.Message;
+        why = "the controller's inverse kinematics found no solution — [" +
+          std::to_string(st.StatusCode) + "] " + st.Message;
         return RobotStatus::okay();
       }
+      joints_deg_out.assign(joints.axisData.begin(), joints.axisData.begin() + 6);
       reachable = true;
       why.clear();
       return RobotStatus::okay();
+    });
+}
+
+RobotStatus MotomanRobot::convertPose(
+  const Pose & in, int32_t from_tool, int32_t to_tool, const std::vector<double> * joints_in,
+  Pose & out, std::vector<double> & joints_out)
+{
+  return withController(
+    [&](MotomanController & c) {
+      PositionData joints{};
+      if (joints_in && joints_in->size() >= 6) {
+        joints.coordinateType = CoordinateType::JointDegrees;
+        for (size_t i = 0; i < 6; ++i) {joints.axisData[i] = (*joints_in)[i];}
+      } else {
+        // Seed the Delta IK with the current joints, in degrees.
+        PositionData pulse{};
+        StatusInfo st = c.ControlGroup->ReadPositionData(
+          ControlGroupId::R1, CoordinateType::Pulse, 0, 0, pulse);
+        if (!st.IsOk()) {return RobotStatus::from(st);}
+        PositionData seed{};
+        st = c.Kinematics->ConvertPosition(
+          ControlGroupId::R1, pulse, KinematicConversions::PulseToJointAngle, seed);
+        if (!st.IsOk()) {return RobotStatus{st.StatusCode, "seed PulseToJointAngle: " + st.Message};}
+
+        PositionData target = toPositionData(in, from_tool);
+        // The Kinematics interface rejects BaseCoordinate with status 131095
+        // ("did you mean robot coordinate?") — verified on hardware in the
+        // fork. With no base/travel axis the two frames coincide.
+        target.coordinateType = CoordinateType::RobotCoordinate;
+        st = c.Kinematics->ConvertPositionFromCartesian(
+          ControlGroupId::R1, target, KinematicConversions::CartesianPosToJointAngle,
+          KinematicType::Delta, seed.axisData, joints);
+        if (!st.IsOk()) {
+          return RobotStatus{st.StatusCode, "IK (tool " + std::to_string(from_tool) + "): " + st.Message};
+        }
+        joints.coordinateType = CoordinateType::JointDegrees;
+      }
+      joints.toolNumber = static_cast<UINT32>(to_tool < 0 ? 0 : to_tool);
+      joints.userCoordinateNumber = 0;
+
+      PositionData cart{};
+      StatusInfo st = c.Kinematics->ConvertPosition(
+        ControlGroupId::R1, joints, KinematicConversions::JointAngleToCartesianPos, cart);
+      if (!st.IsOk()) {
+        return RobotStatus{st.StatusCode, "FK (tool " + std::to_string(to_tool) + "): " + st.Message};
+      }
+      out = fromPositionData(cart);
+      joints_out.assign(joints.axisData.begin(), joints.axisData.begin() + 6);
+      // The bench check compares cart.toolNumber with to_tool; surface it.
+      return RobotStatus::okay(
+        "converted via joints; controller reports tool " + std::to_string(cart.toolNumber) +
+        " coord " + std::to_string(static_cast<int>(cart.coordinateType)));
     });
 }
 
@@ -359,7 +539,7 @@ RobotStatus MotomanRobot::writeInt(uint16_t index, int32_t value)
     });
 }
 
-RobotStatus MotomanRobot::readPositionVar(uint16_t index, Pose & out)
+RobotStatus MotomanRobot::readPositionVar(uint16_t index, Pose & out, int32_t & tool_number)
 {
   return withController(
     [&](MotomanController & c) {
@@ -367,17 +547,18 @@ RobotStatus MotomanRobot::readPositionVar(uint16_t index, Pose & out)
       StatusInfo st = c.Variables->RobotPositionVariable->Read(index, d);
       if (!st.IsOk()) {return RobotStatus::from(st);}
       out = fromPositionData(d.positionData);
+      tool_number = static_cast<int32_t>(d.positionData.toolNumber);
       return RobotStatus::okay();
     });
 }
 
-RobotStatus MotomanRobot::writePositionVar(uint16_t index, const Pose & pose)
+RobotStatus MotomanRobot::writePositionVar(uint16_t index, const Pose & pose, int32_t tool_number)
 {
   return withController(
     [&](MotomanController & c) {
       RobotPositionVariableData d{};
       d.variableIndex = index;
-      d.positionData = toPositionData(pose, 0);
+      d.positionData = toPositionData(pose, tool_number);
       return RobotStatus::from(c.Variables->RobotPositionVariable->Write(d));
     });
 }

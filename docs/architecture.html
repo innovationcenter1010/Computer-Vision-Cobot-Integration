@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cobot Bin-Picking — ROS 2 Architecture</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-soft: #f6f7f9;
+    --fg: #1d2129;
+    --fg-muted: #5c6470;
+    --line: #d9dde3;
+    --accent: #1f6feb;
+    --py: #dbeafe;   --py-b: #2563eb;
+    --cpp: #ede9fe;  --cpp-b: #7c3aed;
+    --ext: #fef3c7;  --ext-b: #d97706;
+    --hw: #fee2e2;   --hw-b: #dc2626;
+    --file: #f3f4f6; --file-b: #6b7280;
+    --c-topic: #1d2129;
+    --c-call: #2563eb;
+    --c-ext: #b45309;
+    --region: #f9fafb;
+    --code-bg: #f1f3f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218;
+      --bg-soft: #161b23;
+      --fg: #e6e9ee;
+      --fg-muted: #9aa4b2;
+      --line: #2b323d;
+      --accent: #6ea8fe;
+      --py: #17284a;   --py-b: #6ea8fe;
+      --cpp: #2a1f4d;  --cpp-b: #b79cff;
+      --ext: #3d2c0b;  --ext-b: #f5b942;
+      --hw: #3f1518;   --hw-b: #f87171;
+      --file: #20262f; --file-b: #9aa4b2;
+      --c-topic: #e6e9ee;
+      --c-call: #6ea8fe;
+      --c-ext: #f5b942;
+      --region: #131821;
+      --code-bg: #1b212b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 28px 80px; }
+  h1 { font-size: 30px; margin: 8px 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 22px; margin: 56px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 17px; margin: 30px 0 8px; }
+  h4 { font-size: 14px; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: .05em; color: var(--fg-muted); }
+  p { margin: 8px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono {
+    font-family: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace; font-size: 0.92em;
+  }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; line-height: 1.45; margin: 8px 0; }
+  pre code { background: none; padding: 0; }
+  .lead { font-size: 17px; color: var(--fg-muted); max-width: 900px; }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 16px 0 8px; padding: 12px 16px; background: var(--bg-soft); border-radius: 10px; font-size: 14px; }
+  .toc a { white-space: nowrap; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--fg-muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; }
+  td code { white-space: nowrap; }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--region); }
+  .scroll svg { display: block; min-width: 1100px; width: 100%; height: auto; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13px; color: var(--fg-muted); margin: 10px 2px; align-items: center; }
+  .legend span::before { content: ""; display: inline-block; width: 26px; height: 0; margin-right: 6px; vertical-align: middle; border-top: 2px solid var(--c-topic); }
+  .legend .call::before { border-top: 2px dashed var(--c-call); }
+  .legend .ext::before  { border-top: 2px dotted var(--c-ext); }
+  .legend .sw::before   { width: 14px; height: 14px; border: 1px solid; border-radius: 3px; }
+  .legend .py::before   { background: var(--py);  border-color: var(--py-b); }
+  .legend .cpp::before  { background: var(--cpp); border-color: var(--cpp-b); }
+  .legend .exts::before { background: var(--ext); border-color: var(--ext-b); }
+  .legend .hw::before   { background: var(--hw);  border-color: var(--hw-b); }
+
+  /* pipeline stage cards */
+  .pipe { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 14px 0; }
+  .stage { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--bg-soft); position: relative; }
+  .stage .n { position: absolute; top: -10px; left: 12px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 10px; }
+  .stage h3 { margin: 6px 0 4px; font-size: 15px; }
+  .stage .who { font-size: 12.5px; color: var(--fg-muted); margin-bottom: 8px; }
+  .stage dl { margin: 0; font-size: 13.5px; }
+  .stage dt { font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--fg-muted); margin-top: 6px; }
+  .stage dd { margin: 0; }
+  .tag { display: inline-block; font-size: 11.5px; padding: 1px 7px; border-radius: 4px; border: 1px solid; margin-right: 4px; font-weight: 600; }
+  .tag.py { background: var(--py); border-color: var(--py-b); }
+  .tag.cpp { background: var(--cpp); border-color: var(--cpp-b); }
+  .tag.ext { background: var(--ext); border-color: var(--ext-b); }
+  .tag.hw { background: var(--hw); border-color: var(--hw-b); }
+
+  /* node reference cards */
+  .node { border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; margin: 18px 0; background: var(--bg); }
+  .node header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .node header h3 { margin: 0; font-size: 20px; }
+  .node .meta { color: var(--fg-muted); font-size: 13.5px; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 24px; }
+  .iface { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+  .iface > div { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg-soft); }
+  .iface h4 { margin: 0 0 4px; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--fg); }
+  .iface .use { font-size: 12.5px; color: var(--fg-muted); margin-bottom: 6px; }
+  .iface pre { margin: 0; font-size: 12px; background: var(--code-bg); }
+  .note { border-left: 4px solid var(--ext-b); background: var(--bg-soft); padding: 10px 14px; border-radius: 6px; margin: 12px 0; }
+  .warn { border-left-color: var(--hw-b); }
+  .seq { counter-reset: step; list-style: none; padding: 0; margin: 10px 0; }
+  .seq li { counter-increment: step; position: relative; padding: 6px 0 6px 44px; border-left: 2px solid var(--line); margin-left: 14px; }
+  .seq li::before { content: counter(step); position: absolute; left: -15px; top: 6px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .seq b.who { color: var(--accent); }
+  .kv { font-size: 13.5px; }
+  .kv td:first-child { font-weight: 600; width: 46%; }
+  .kv code, .cols code, .node code { white-space: normal; overflow-wrap: break-word; }
+  .cols > div { min-width: 0; }
+  .node table { table-layout: fixed; }
+  .node table td:first-child { width: 46%; }
+  footer { margin-top: 60px; color: var(--fg-muted); font-size: 13px; }
+
+  /* svg */
+  svg text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: var(--fg); }
+  svg .mono { font-family: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace; }
+  svg .lbl { font-size: 11.5px; fill: var(--fg-muted); }
+  svg .lbl.call { fill: var(--c-call); }
+  svg .lbl.ext { fill: var(--c-ext); }
+  svg .name { font-size: 13.5px; font-weight: 700; }
+  svg .sub { font-size: 11px; fill: var(--fg-muted); }
+  svg .region { fill: var(--region); stroke: var(--line); stroke-dasharray: 6 4; rx: 12; }
+  svg .region-t { font-size: 12.5px; font-weight: 700; fill: var(--fg-muted); letter-spacing: .04em; }
+  svg .box { stroke-width: 1.5; rx: 8; }
+  svg .box.py  { fill: var(--py);   stroke: var(--py-b); }
+  svg .box.cpp { fill: var(--cpp);  stroke: var(--cpp-b); }
+  svg .box.ext { fill: var(--ext);  stroke: var(--ext-b); }
+  svg .box.hw  { fill: var(--hw);   stroke: var(--hw-b); }
+  svg .box.file{ fill: var(--file); stroke: var(--file-b); stroke-dasharray: 3 3; }
+  svg .e { fill: none; stroke-width: 1.8; }
+  svg .e.topic { stroke: var(--c-topic); marker-end: url(#a-topic); }
+  svg .e.call  { stroke: var(--c-call); stroke-dasharray: 7 4; marker-end: url(#a-call); }
+  svg .e.ext   { stroke: var(--c-ext); stroke-dasharray: 2 4; stroke-linecap: round; marker-end: url(#a-ext); }
+  svg .e.both  { marker-start: url(#a-ext-r); }
+  svg .e.both.call { marker-start: url(#a-call-r); }
+  svg #a-topic path { fill: var(--c-topic); }
+  svg #a-call path, svg #a-call-r path { fill: var(--c-call); }
+  svg #a-ext path, svg #a-ext-r path { fill: var(--c-ext); }
+</style>
+</head>
+<body>
+<main>
+
+<p class="mono" style="color:var(--fg-muted);font-size:12.5px;margin:0">Computer-Vision-Cobot-Integration · docs/architecture.html</p>
+<h1>ROS 2 bin-picking stack — architecture</h1>
+<p class="lead">
+  How the repository is organised, which node does what, and how a camera frame turns into a robot
+  motion. Read top to bottom the first time; the second half is a reference for every node,
+  topic, service, action and message.
+</p>
+
+<nav class="toc">
+  <a href="#overview">1. Overview</a>
+  <a href="#graph">2. Node graph</a>
+  <a href="#pipeline">3. Processing pipeline</a>
+  <a href="#operation">4. One pick_layer run</a>
+  <a href="#repo">5. Repository layout</a>
+  <a href="#nodes">6. Node reference</a>
+  <a href="#external">7. External components (streamer, YRC1000)</a>
+  <a href="#interfaces">8. Interface reference</a>
+  <a href="#runtime">9. Runtime, config &amp; health</a>
+  <a href="#gotchas">10. Gotchas</a>
+</nav>
+
+<!-- ===================================================================== -->
+<h2 id="overview">1. Overview in 60 seconds</h2>
+<p>
+  The system picks cans out of a bin, one layer at a time, with a Yaskawa Motoman cobot guided
+  by an Orbbec Astra RGB-D camera. Three processes are involved and only one of them lives in this repository:
+</p>
+<table>
+  <tr><th>Process</th><th>Where it runs</th><th>Language</th><th>Job</th></tr>
+  <tr>
+    <td><b>Astra ZMQ streamer</b> <span class="tag ext">external</span></td>
+    <td>Host PC, next to the USB camera (separate codebase)</td>
+    <td>C (Orbbec Astra SDK + libzmq)</td>
+    <td>Opens the camera, aligns depth to color, publishes both streams over ZMQ PUB on ports 5550/5551 and writes the camera intrinsics JSON.</td>
+  </tr>
+  <tr>
+    <td><b>cobot-ros container</b> <span class="tag py">Python</span><span class="tag cpp">C++</span></td>
+    <td>Docker on the host PC (<code>docker compose up</code>)</td>
+    <td>ROS 2 Humble, rmw_cyclonedds</td>
+    <td>Everything in <code>ros2_ws/</code>: 8 nodes from one launch file — camera bridge, ONNX detection, localization/calibration math, task orchestration, pick choreography, the YMConnect hardware driver, the web UI and a health monitor.</td>
+  </tr>
+  <tr>
+    <td><b>YRC1000 controller</b> <span class="tag hw">hardware</span></td>
+    <td>Robot cell LAN (<code>192.168.1.31</code>)</td>
+    <td>Yaskawa firmware</td>
+    <td>Owns the arm: servos, trajectory execution, IO bits for the gripper and sensors, alarms. Driven exclusively by <code>cobot_control</code> through the vendored <code>libYMConnect.so</code>.</td>
+  </tr>
+</table>
+<p>
+  Data flows strictly left to right: <b>pixels</b> (camera_node → detector_node) become
+  <b>millimetres in the robot base frame</b> (localization_node) become <b>an ordered list of
+  pick goals</b> (task_manager) become <b>a sequence of moves and IO writes</b> (cobot_operation)
+  become <b>YMConnect calls</b> (cobot_control). Every node also emits a heartbeat, and the web
+  node mirrors the whole state to a browser.
+</p>
+
+<!-- ===================================================================== -->
+<h2 id="graph">2. Node graph</h2>
+<p>
+  Primary data paths only — the complete pub/sub surface of each node is in
+  <a href="#nodes">§6</a>. Boxes are ROS nodes unless marked otherwise; region labels show where each process runs.
+</p>
+<div class="legend">
+  <span>ROS topic</span>
+  <span class="call">ROS action / service</span>
+  <span class="ext">non-ROS transport (USB, ZMQ, TCP, HTTP, file)</span>
+  <span class="sw py">Python node</span>
+  <span class="sw cpp">C++ node</span>
+  <span class="sw exts">external process</span>
+  <span class="sw hw">hardware</span>
+</div>
+<div class="scroll">
+<svg viewBox="0 0 1500 690" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ROS 2 node graph">
+  <defs>
+    <marker id="a-topic" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="a-call"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="a-call-r" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M10,0 L0,5 L10,10 z"/></marker>
+    <marker id="a-ext"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="a-ext-r" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M10,0 L0,5 L10,10 z"/></marker>
+  </defs>
+
+  <!-- regions -->
+  <rect class="region" x="16" y="40" width="210" height="440"/>
+  <text class="region-t" x="26" y="62">HOST PC (Windows)</text>
+  <rect class="region" x="300" y="40" width="970" height="520"/>
+  <text class="region-t" x="312" y="62">DOCKER CONTAINER cobot-ros — ros2 launch cobot_bringup robot.launch.py</text>
+  <text class="sub" x="1258" y="62" text-anchor="end">every node → /health/heartbeat → health_monitor</text>
+  <rect class="region" x="1300" y="40" width="180" height="440"/>
+  <text class="region-t" x="1312" y="62">ROBOT CELL LAN</text>
+
+  <!-- ===== edges (drawn before boxes) ===== -->
+  <!-- camera -> streamer (USB) -->
+  <path class="e ext" d="M121,136 L121,190"/>
+  <text class="lbl ext" x="129" y="168">USB</text>
+  <!-- streamer -> camera_node (ZMQ) -->
+  <path class="e ext" d="M206,232 L320,232"/>
+  <text class="lbl ext mono" x="263" y="209" text-anchor="middle">ZMQ PUB→SUB</text>
+  <text class="lbl ext mono" x="263" y="223" text-anchor="middle">:5550 · :5551</text>
+  <!-- streamer -> intrinsics file -->
+  <path class="e ext" d="M121,274 L121,340"/>
+  <text class="lbl ext" x="129" y="312">writes</text>
+  <!-- intrinsics file -> camera_node -->
+  <path class="e ext" d="M206,368 L263,368 L263,255 L320,255"/>
+  <text class="lbl ext" x="263" y="386" text-anchor="middle">bind mount</text>
+
+  <!-- camera_node -> detector_node -->
+  <path class="e topic" d="M470,220 L490,220 L490,135 L510,135"/>
+  <text class="lbl mono" x="486" y="172" text-anchor="end">/camera/color/image_raw</text>
+  <!-- camera_node -> localization_node -->
+  <path class="e topic" d="M470,250 L490,250 L490,335 L510,335"/>
+  <text class="lbl mono" x="486" y="300" text-anchor="end">/camera/depth/image_raw</text>
+  <text class="lbl mono" x="486" y="314" text-anchor="end">/camera/color/camera_info</text>
+  <!-- localization -> detector (action) -->
+  <path class="e call" d="M527,300 L527,170"/>
+  <text class="lbl call" x="535" y="228">action</text>
+  <text class="lbl call mono" x="535" y="242">/vision/detect</text>
+  <!-- task_manager -> localization (action + srv) -->
+  <path class="e call" d="M710,225 L690,225 L690,335 L670,335"/>
+  <text class="lbl call" x="684" y="262" text-anchor="end">action <tspan class="mono">/vision/scan</tspan></text>
+  <text class="lbl call" x="684" y="276" text-anchor="end">srv <tspan class="mono">/vision/verify_target</tspan></text>
+  <text class="lbl call" x="684" y="290" text-anchor="end">srv <tspan class="mono">/vision/calibration_*</tspan></text>
+  <!-- task_manager -> cobot_operation -->
+  <path class="e call" d="M860,235 L900,235"/>
+  <text class="lbl call" x="880" y="190" text-anchor="middle">action <tspan class="mono">/cobot/pick_can</tspan></text>
+  <!-- cobot_operation -> cobot_control -->
+  <path class="e call" d="M1050,228 L1090,228"/>
+  <text class="lbl call" x="1070" y="176" text-anchor="middle">action <tspan class="mono">/cobot/move_to_pose</tspan></text>
+  <text class="lbl call" x="1070" y="190" text-anchor="middle">srv <tspan class="mono">/cobot/set_output_bit</tspan></text>
+  <path class="e topic" d="M1090,250 L1050,250"/>
+  <text class="lbl mono" x="1070" y="290" text-anchor="middle">/cobot/state · /cobot/status</text>
+  <!-- task_manager -> cobot_control (calibration moves) -->
+  <path class="e call" d="M785,200 L785,82 L1165,82 L1165,200"/>
+  <text class="lbl call" x="975" y="74" text-anchor="middle">action <tspan class="mono">/cobot/move_to_pose</tspan> (calibration grid)  ·  subscribes <tspan class="mono">/cobot/state</tspan></text>
+  <!-- cobot_control -> YRC1000 -->
+  <path class="e ext both" d="M1240,235 L1315,235"/>
+  <text class="lbl ext" x="1277" y="176" text-anchor="middle">YMConnect</text>
+  <text class="lbl ext mono" x="1277" y="190" text-anchor="middle">TCP 192.168.1.31</text>
+  <!-- YRC1000 -> arm -->
+  <path class="e ext both" d="M1390,270 L1390,330"/>
+  <text class="lbl ext" x="1398" y="304">servo · IO</text>
+
+  <!-- camera_node / localization -> web_node -->
+  <path class="e topic" d="M395,270 L395,475 L710,475"/>
+  <path class="e topic" d="M590,370 L590,475"/>
+  <text class="lbl mono" x="403" y="384">/camera/color/image_raw</text>
+  <text class="lbl mono" x="403" y="398">/camera/depth/image_raw</text>
+  <text class="lbl mono" x="582" y="412" text-anchor="end">/vision/targets</text>
+  <text class="lbl mono" x="582" y="426" text-anchor="end">/vision/detections_px</text>
+  <!-- task_manager <-> web_node -->
+  <path class="e topic" d="M797,270 L797,440"/>
+  <path class="e call" d="M773,440 L773,270"/>
+  <text class="lbl mono" x="805" y="352">/task/status · system_state</text>
+  <text class="lbl mono" x="805" y="366">/task/workflows · pick_event</text>
+  <text class="lbl call" x="765" y="392" text-anchor="end">srv <tspan class="mono">/task/start</tspan></text>
+  <text class="lbl call" x="765" y="406" text-anchor="end">srv <tspan class="mono">/task/stop</tspan></text>
+  <text class="lbl call" x="765" y="420" text-anchor="end">srv <tspan class="mono">/task/calibrate</tspan></text>
+  <!-- health_monitor -> web_node / task_manager -->
+  <path class="e topic" d="M900,475 L860,475"/>
+  <text class="lbl mono" x="880" y="416" text-anchor="middle">/health/summary</text>
+  <text class="lbl" x="880" y="430" text-anchor="middle">(also read by task_manager)</text>
+  <!-- web_node <-> browser -->
+  <path class="e ext both" d="M785,510 L785,600"/>
+  <text class="lbl ext" x="793" y="552">HTTP :8000</text>
+  <text class="lbl ext mono" x="793" y="566">WebSocket /ws</text>
+
+  <!-- ===== boxes ===== -->
+  <!-- host -->
+  <rect class="box hw" x="36" y="80" width="170" height="56"/>
+  <text class="name" x="121" y="103" text-anchor="middle">Orbbec Astra</text>
+  <text class="sub" x="121" y="120" text-anchor="middle">RGB-D camera · 640×480</text>
+
+  <rect class="box ext" x="36" y="190" width="170" height="84"/>
+  <text class="name" x="121" y="214" text-anchor="middle">Astra ZMQ streamer</text>
+  <text class="sub" x="121" y="231" text-anchor="middle">C · Astra SDK + libzmq</text>
+  <text class="sub" x="121" y="246" text-anchor="middle">PUB color rgb8 :5550</text>
+  <text class="sub" x="121" y="260" text-anchor="middle">PUB depth int16 mm :5551</text>
+
+  <rect class="box file" x="36" y="340" width="170" height="56"/>
+  <text class="name mono" x="121" y="362" text-anchor="middle" style="font-size:12px">camera_intrinsics.json</text>
+  <text class="sub" x="121" y="379" text-anchor="middle">vision_workspace/operation/</text>
+
+  <!-- container -->
+  <rect class="box py" x="320" y="200" width="150" height="70"/>
+  <text class="name" x="395" y="228" text-anchor="middle">camera_node</text>
+  <text class="sub" x="395" y="245" text-anchor="middle">cobot_camera · Python</text>
+  <text class="sub" x="395" y="259" text-anchor="middle">ZMQ → sensor_msgs/Image</text>
+
+  <rect class="box cpp" x="510" y="100" width="160" height="70"/>
+  <text class="name" x="590" y="128" text-anchor="middle">detector_node</text>
+  <text class="sub" x="590" y="145" text-anchor="middle">cobot_detector · C++</text>
+  <text class="sub" x="590" y="159" text-anchor="middle">YOLO via ONNX Runtime · pixels</text>
+
+  <rect class="box py" x="510" y="300" width="160" height="70"/>
+  <text class="name" x="590" y="328" text-anchor="middle">localization_node</text>
+  <text class="sub" x="590" y="345" text-anchor="middle">cobot_vision · Python</text>
+  <text class="sub" x="590" y="359" text-anchor="middle">px + depth → robot mm · calib</text>
+
+  <rect class="box py" x="710" y="200" width="150" height="70"/>
+  <text class="name" x="785" y="228" text-anchor="middle">task_manager</text>
+  <text class="sub" x="785" y="245" text-anchor="middle">cobot_tasks · Python</text>
+  <text class="sub" x="785" y="259" text-anchor="middle">workflows · system state</text>
+
+  <rect class="box py" x="900" y="200" width="150" height="70"/>
+  <text class="name" x="975" y="228" text-anchor="middle">cobot_operation</text>
+  <text class="sub" x="975" y="245" text-anchor="middle">cobot_operation · Python</text>
+  <text class="sub" x="975" y="259" text-anchor="middle">pick &amp; place choreography</text>
+
+  <rect class="box cpp" x="1090" y="200" width="150" height="70"/>
+  <text class="name" x="1165" y="228" text-anchor="middle">cobot_control</text>
+  <text class="sub" x="1165" y="245" text-anchor="middle">cobot_control · C++</text>
+  <text class="sub" x="1165" y="259" text-anchor="middle">only YMConnect client</text>
+
+  <rect class="box py" x="710" y="440" width="150" height="70"/>
+  <text class="name" x="785" y="468" text-anchor="middle">web_node</text>
+  <text class="sub" x="785" y="485" text-anchor="middle">cobot_web · Python</text>
+  <text class="sub" x="785" y="499" text-anchor="middle">FastAPI + uvicorn · UI</text>
+
+  <rect class="box py" x="900" y="440" width="150" height="70"/>
+  <text class="name" x="975" y="468" text-anchor="middle">health_monitor</text>
+  <text class="sub" x="975" y="485" text-anchor="middle">cobot_health · Python</text>
+  <text class="sub" x="975" y="499" text-anchor="middle">heartbeats → summary</text>
+
+  <rect class="box ext" x="710" y="600" width="150" height="50"/>
+  <text class="name" x="785" y="622" text-anchor="middle">Browser</text>
+  <text class="sub" x="785" y="639" text-anchor="middle">http://localhost:8000</text>
+
+  <!-- robot -->
+  <rect class="box hw" x="1315" y="200" width="150" height="70"/>
+  <text class="name" x="1390" y="228" text-anchor="middle">YRC1000</text>
+  <text class="sub" x="1390" y="245" text-anchor="middle">Yaskawa controller</text>
+  <text class="sub" x="1390" y="259" text-anchor="middle">servos · trajectory · IO</text>
+
+  <rect class="box hw" x="1315" y="330" width="150" height="84"/>
+  <text class="name" x="1390" y="356" text-anchor="middle">Motoman cobot</text>
+  <text class="sub" x="1390" y="373" text-anchor="middle">arm (group R1)</text>
+  <text class="sub" x="1390" y="387" text-anchor="middle">vacuum gripper (out g1/b2)</text>
+  <text class="sub" x="1390" y="401" text-anchor="middle">check sensors (in g1/b3–b6)</text>
+
+  <!-- legend inside svg (bottom-left) -->
+  <text class="sub" x="26" y="530">Not drawn: /health/heartbeat from every node,</text>
+  <text class="sub" x="26" y="545">the manual-dot-click topics (web → localization),</text>
+  <text class="sub" x="26" y="560">and the 17 cobot_control utility services (§6).</text>
+</svg>
+</div>
+
+<!-- ===================================================================== -->
+<h2 id="pipeline">3. Processing pipeline — what is computed where</h2>
+<p>
+  The same graph, read as a pipeline. Each stage lists exactly what enters, what the stage owns,
+  and what leaves. A useful rule when you are lost: <b>pixels stop at detector_node, millimetres
+  start at localization_node, motion starts at cobot_operation, and only cobot_control speaks
+  YMConnect.</b>
+</p>
+<div class="pipe">
+  <div class="stage"><span class="n">1</span>
+    <h3>Sense</h3><div class="who"><span class="tag hw">hardware</span><span class="tag ext">external</span> Astra + C streamer</div>
+    <dl>
+      <dt>In</dt><dd>USB frames from the Orbbec Astra</dd>
+      <dt>Does</dt><dd>Opens color + depth streams, aligns depth to the color image, stamps a 12-byte header, publishes each stream on its own ZMQ PUB socket; dumps color intrinsics to JSON</dd>
+      <dt>Out</dt><dd><code>tcp://*:5550</code> rgb8 · <code>tcp://*:5551</code> int16 mm · <code>camera_intrinsics.json</code></dd>
+    </dl>
+  </div>
+  <div class="stage"><span class="n">2</span>
+    <h3>Bridge</h3><div class="who"><span class="tag py">Python</span> camera_node</div>
+    <dl>
+      <dt>In</dt><dd>ZMQ SUB on both endpoints (latest-frame cache, 2 threads)</dd>
+      <dt>Does</dt><dd>Parses the header, drops short payloads, republishes newest frame at <code>publish_rate_hz</code>; relays intrinsics as a latched CameraInfo; saves PNG pairs on request</dd>
+      <dt>Out</dt><dd><code>/camera/color/image_raw</code> · <code>/camera/depth/image_raw</code> · <code>/camera/color/camera_info</code></dd>
+    </dl>
+  </div>
+  <div class="stage"><span class="n">3</span>
+    <h3>Detect (pixels)</h3><div class="who"><span class="tag cpp">C++</span> detector_node</div>
+    <dl>
+      <dt>In</dt><dd>Latest color frame + <code>Detect</code> goal with a <code>model_id</code></dd>
+      <dt>Does</dt><dd>Letterbox → ONNX Runtime session → decode OBB/bbox head → NMS/dedupe. Models come from <code>runtime_models/models.yaml</code>. No geometry, no mm.</dd>
+      <dt>Out</dt><dd><code>ObbDetectionArray</code> (action result, mirrored on <code>/vision/detections_px</code>)</dd>
+    </dl>
+  </div>
+  <div class="stage"><span class="n">4</span>
+    <h3>Localize (robot mm)</h3><div class="who"><span class="tag py">Python</span> localization_node</div>
+    <dl>
+      <dt>In</dt><dd>Depth ring buffer, CameraInfo, pixel detections, <code>calibration.yaml</code></dd>
+      <dt>Does</dt><dd>Samples depth at each detection centre, applies the 3×4 camera→robot matrix, converts OBB angle to rz, orders targets as a robot-frame snake. Also owns calibration fitting, <code>verify_target</code> and <code>get_layer_height</code>.</dd>
+      <dt>Out</dt><dd><code>TargetArray</code> (Scan result + <code>/vision/targets</code>)</dd>
+    </dl>
+  </div>
+  <div class="stage"><span class="n">5</span>
+    <h3>Orchestrate</h3><div class="who"><span class="tag py">Python</span> task_manager</div>
+    <dl>
+      <dt>In</dt><dd>UI commands (<code>/task/start…</code>), <code>/cobot/state</code>, <code>/health/summary</code></dd>
+      <dt>Does</dt><dd>Runs a workflow (<code>pick_layer</code>, <code>calibration</code>, <code>startup_calibration</code>) as a sequence of action/service calls; derives system capability (SEE / MOVE / OPERATE) and gates workflows on it</dd>
+      <dt>Out</dt><dd><code>/task/status</code>, <code>/task/system_state</code>, <code>/task/pick_event</code>, <code>/task/layer_report</code>, <code>/task/workflows</code></dd>
+    </dl>
+  </div>
+  <div class="stage"><span class="n">6</span>
+    <h3>Choreograph</h3><div class="who"><span class="tag py">Python</span> cobot_operation</div>
+    <dl>
+      <dt>In</dt><dd>One <code>PickCan</code> goal (a <code>Target</code>), <code>/cobot/state</code>, <code>cobot_setup.yaml</code>, <code>trajectories.json</code></dd>
+      <dt>Does</dt><dd>check → approach → grip → lift → place; applies tool tip offsets, chooses the place trajectory from the divot sensor, asserts named sensors between steps</dd>
+      <dt>Out</dt><dd><code>MoveToPose</code> goals + <code>set_output_bit gripper</code> calls; a <code>PickCan</code> result with per-job report</dd>
+    </dl>
+  </div>
+  <div class="stage"><span class="n">7</span>
+    <h3>Drive</h3><div class="who"><span class="tag cpp">C++</span> cobot_control</div>
+    <dl>
+      <dt>In</dt><dd><code>MoveToPose</code> goals, IO/variable services, pause/stop/servo triggers</dd>
+      <dt>Does</dt><dd>Holds the single YMConnect session: IK reachability check, <code>AddPointToTrajectory</code> + <code>MotionStart</code>, progress polling, 10 Hz state poll (servo, alarms, named IO, TCP pose)</dd>
+      <dt>Out</dt><dd><code>/cobot/state</code> (10 Hz) · <code>/cobot/status</code> (latched) · TCP to the YRC1000</dd>
+    </dl>
+  </div>
+  <div class="stage"><span class="n">8</span>
+    <h3>Execute</h3><div class="who"><span class="tag hw">hardware</span> YRC1000 + arm</div>
+    <dl>
+      <dt>In</dt><dd>YMConnect packets on <code>192.168.1.31</code></dd>
+      <dt>Does</dt><dd>Interpolates joint/linear moves for control group R1, drives servos, switches the gripper output, reports input bits and alarms</dd>
+      <dt>Out</dt><dd>A can moves from the bin to the place position</dd>
+    </dl>
+  </div>
+</div>
+<p>Two side channels run alongside the main pipeline:</p>
+<ul>
+  <li><b>Observation</b> — <code>web_node</code> subscribes to the images, detections, targets, task and health topics, JPEG-encodes the frames and pushes everything to the browser over one WebSocket; browser commands come back as Trigger/StartWorkflow service calls.</li>
+  <li><b>Health</b> — every node publishes a <code>Heartbeat</code> every 2 s; <code>health_monitor</code> folds them into a latched <code>/health/summary</code> that task_manager uses to compute capability and web_node shows on the dashboard.</li>
+</ul>
+
+<!-- ===================================================================== -->
+<h2 id="operation">4. One <code>pick_layer</code> run, end to end</h2>
+<p>The default workflow. Triggered by the UI's Start button (<code>/task/start</code>) or <code>/task/start_workflow {workflow: "pick_layer"}</code>.</p>
+<ol class="seq">
+  <li><b class="who">browser → web_node</b>: WebSocket <code>{receiver:"COBOT", command:"start"}</code>. web_node calls <code>std_srvs/Trigger /task/start</code>.</li>
+  <li><b class="who">task_manager</b>: checks <code>/task/system_state</code> capability is <code>OPERATE</code> (robot fresh, connected, servo on, not alarming, camera OK, calibrated, depth fresh, detector OK). Publishes <code>TaskStatus SCANNING</code>. Sends <code>Scan.Goal{model_id: scan_model_id}</code> to <code>/vision/scan</code>.</li>
+  <li><b class="who">localization_node</b>: rejects if not calibrated / no depth / detector missing. Otherwise forwards <code>Detect.Goal{model_id}</code> to <code>/vision/detect</code> (feedback <code>detecting</code>).</li>
+  <li><b class="who">detector_node</b>: takes its latest <code>/camera/color/image_raw</code>, runs the ONNX session for that model (default <code>cans</code>, OBB head), returns <code>ObbDetectionArray</code> with pixel centres, corners and angles; also publishes it on <code>/vision/detections_px</code> for the UI overlay.</li>
+  <li><b class="who">localization_node</b> (feedback <code>localizing</code>): for each detection samples the median depth in a <code>depth_sample_window_px</code> window from the depth ring buffer, applies <code>xyz = M · [u·d, v·d, d, 1]</code>, converts the OBB angle to a robot rz, drops entries with no depth, sorts into a snake along <code>pathing_row_axis</code>, publishes <code>/vision/targets</code> and returns <code>TargetArray</code>.</li>
+  <li><b class="who">task_manager</b>: for each <code>Target</code> publishes <code>TaskStatus PICKING i/N</code> and sends <code>PickCan.Goal{target}</code> to <code>/cobot/pick_can</code> (budget 300 s). <code>/task/stop</code> cancels the in-flight goal natively.</li>
+  <li><b class="who">cobot_operation</b>: goal accepted only when <code>/cobot/status == IDLE</code>. Phases (each reported as feedback): <code>check</code> (teach point from trajectories.json) → <code>approach</code> (above target, then linear descend with the <code>descend</code> profile to <code>pick_tip_z_mm</code>) → <code>grip</code> (<code>/cobot/set_output_bit gripper=true</code>) → <code>lift</code> (back up, back to check, assert <code>existance_check==true</code> from <code>/cobot/state</code>, read <code>divot_check</code>/<code>right_complete</code>/<code>left_complete</code>) → <code>place</code> (2-pose teach trajectory: <code>left</code>/<code>right</code>, <code>_flip</code> variant when the divot sensor says so; gripper off; assert sensor again).</li>
+  <li><b class="who">cobot_control</b>: each <code>MoveToPose</code> is rejected unless connected, servo on, not alarming, control mode ≠ TEACH and not busy. It runs an IK reachability check, <code>AddPointToTrajectory</code> (joint or linear, speed / accel / decel / accuracy from the named motion profile), <code>MotionStart</code>, then polls <code>GetMotionTargetProgress</code> until reached or <code>motion_timeout_s</code>. Meanwhile the 10 Hz poll keeps <code>/cobot/state</code> current so cobot_operation can read sensors.</li>
+  <li><b class="who">task_manager</b>: after a successful pick calls <code>/vision/verify_target</code> (a second depth read at the target; <code>present==false</code> means the can is gone) and publishes a <code>PickEvent</code> per can. The verdict is informational — it does not yet trigger a rescan.</li>
+  <li><b class="who">task_manager</b>: publishes <code>/task/layer_report</code> and <code>TaskStatus IDLE</code>. web_node forwards every status, pick event and report to the browser as it happens.</li>
+</ol>
+<div class="note">
+  <b>Calibration workflows</b> follow the same pattern but task_manager drives <code>/cobot/move_to_pose</code> directly through a grid of poses (<code>calibration_x/y_range_mm</code>, <code>calibration_z_levels_mm</code>) and calls
+  <code>/vision/calibration_begin</code> → N × <code>/vision/calibration_sample{x,y,z}</code> → <code>/vision/calibration_compute</code>. localization_node finds the red marker on the tool (red_dot model, or — currently — a manual click relayed from the web UI on <code>/vision/manual_dot_click</code>), pairs the camera measurement with the commanded TCP + <code>marker_offset_mm</code>, and fits the 3×4 matrix written to <code>calibration.yaml</code>. With <code>auto_calibrate_on_startup: true</code> a small <code>startup_calibration</code> grid runs at boot — <b>the arm moves at launch</b>.
+</div>
+
+<!-- ===================================================================== -->
+<h2 id="repo">5. Repository layout</h2>
+<pre><code>Computer-Vision-Cobot-Integration/
+├── docker-compose.yaml            # one service "cobot-ros", port 8000, bind mounts below
+├── docker/
+│   ├── Dockerfile                 # stage builder (ros:humble + ONNX Runtime + colcon build + detector tests)
+│   │                              # stage runtime (ros:humble-ros-core + install tree only)
+│   └── entrypoint.sh
+├── ros2_ws/src/                   # THE application (colcon workspace)
+│   ├── cobot_bringup/             # robot.launch.py + config/ (cobot_params.yaml, cobot_setup.yaml,
+│   │                              #   trajectories.json, calibration.yaml) — depends on everything, nothing depends on it
+│   ├── cobot_interfaces/          # 19 msg · 14 srv · 4 action (the contract between nodes, §8)
+│   ├── cobot_camera/              # camera_node — ZMQ SUB → sensor_msgs/Image
+│   ├── cobot_detector/            # detector_node (C++) — ONNX Runtime YOLO, /vision/detect action
+│   ├── cobot_vision/              # localization_node — calibration.py, pathing.py, rotation.py
+│   ├── cobot_tasks/               # task_manager_node — workflows/{pick_layer,calibration}.py, system_state.py
+│   ├── cobot_operation/           # cobot_operation_node — primitives.py, choreography.py, geometry.py
+│   ├── cobot_control/             # cobot_control_node (C++) — motoman_robot.cpp + third_party/YMConnect/
+│   ├── cobot_web/                 # web_node — FastAPI app, templates/index.html, static/{app,commands}.js
+│   ├── cobot_health/              # health_monitor + HeartbeatPublisher helper used by every Python node
+│   └── motoman_cpp/               # RETIRED pybind11 module (COLCON_IGNORE) — history only
+├── runtime_models/                # bind-mounted → /ws/runtime_models
+│   ├── models.yaml                # model registry: id → .onnx path, obb|bbox, thresholds
+│   ├── cans_obb_best/             # <name>.onnx + manifest.yaml (input 640×480, OBB head)
+│   └── yoloe_cobot_v1/            # green_light bbox model (YOLOE seg export, boxes only)
+├── vision_workspace/              # bind-mounted → /ws/vision_workspace (dev-PC side)
+│   ├── tools/                     # train_yolo_obb.py, export_to_onnx.py, export_yoloe.py, dump_golden.py
+│   ├── operation/                 # camera_intrinsics.json (written by the streamer), captures/, results/
+│   ├── datasets/ weights/ training_runs/   # gitignored training material
+│   └── tests/                     # hardware smoke scripts (move the arm!)
+├── legacy/                        # pre-ROS asyncio monolith + vendored Astra SDK samples (reference only)
+└── docs/
+    ├── architecture.html          # this page
+    ├── ros2_architecture.md       # the original design document (the "why")
+    └── dependancies/orbbec_devices/AstraSDK_Doc_en.chm
+</code></pre>
+<p>
+  <b>What is <i>not</i> here:</b> the Astra ZMQ streamer (separate C program on the host), the ONNX
+  weights themselves (gitignored, exported with <code>vision_workspace/tools/export_to_onnx.py</code>),
+  and anything on the robot controller (no INFORM jobs are used — motion is sent point by point over YMConnect).
+</p>
+
+<!-- ===================================================================== -->
+<h2 id="nodes">6. Node reference</h2>
+<p>
+  All eight nodes are started by <code>ros2_ws/src/cobot_bringup/launch/robot.launch.py</code> with
+  <code>respawn=True</code>, no namespaces and no remappings, all reading
+  <code>config/cobot_params.yaml</code>. Launch arguments <code>camera</code>, <code>vision</code>,
+  <code>cobot</code>, <code>tasks</code>, <code>web</code>, <code>health</code> (all default <code>true</code>) switch groups off for partial bring-up.
+  Every node also publishes <code>/health/heartbeat</code> (<code>Heartbeat</code>, every <code>heartbeat_period_s</code> = 2 s) — omitted from the tables below.
+</p>
+
+<!-- camera_node -->
+<div class="node" id="n-camera">
+  <header><h3>camera_node</h3><span class="tag py">Python</span><span class="meta">package <code>cobot_camera</code> · <code>cobot_camera/camera_node.py</code>, <code>camera_streamer.py</code></span></header>
+  <p>
+    The only bridge between the outside camera and ROS. <code>CameraStream</code> runs two background
+    ZMQ SUB threads (color, depth), each keeping only the newest frame (<code>RCVHWM=2</code>, drain with
+    <code>NOBLOCK</code>, deliberately no <code>ZMQ_CONFLATE</code> because libzmq aborts on multipart). A timer at
+    <code>publish_rate_hz</code> republishes whichever cached frame is new. It never decodes, resizes or
+    aligns anything — depth arrives already aligned to color and is forwarded as-is (<code>16SC1</code>, mm).
+    It also relays the streamer's intrinsics file as a latched <code>CameraInfo</code> (re-read only when the file mtime changes)
+    and can dump a color/depth PNG pair to <code>capture_dir</code> for building training sets.
+  </p>
+  <div class="cols">
+    <div>
+      <h4>Publishes</h4>
+      <table>
+        <tr><td><code>/camera/color/image_raw</code></td><td><code>sensor_msgs/Image</code> rgb8 · BEST_EFFORT, keep-last 1</td></tr>
+        <tr><td><code>/camera/depth/image_raw</code></td><td><code>sensor_msgs/Image</code> 16SC1 (int16 mm, 0 = no reading)</td></tr>
+        <tr><td><code>/camera/color/camera_info</code></td><td><code>sensor_msgs/CameraInfo</code> · RELIABLE + TRANSIENT_LOCAL (latched), plumb_bob with zero distortion</td></tr>
+      </table>
+      <h4>Serves</h4>
+      <table><tr><td><code>/camera/save_frames</code></td><td><code>std_srvs/Trigger</code> → <code>color_&lt;stamp&gt;.png</code> (BGR 8-bit) + <code>depth_&lt;stamp&gt;.png</code> (16-bit mm)</td></tr></table>
+    </div>
+    <div>
+      <h4>Parameters</h4>
+      <table class="kv">
+        <tr><td><code>color_endpoint</code></td><td><code>tcp://host.docker.internal:5550</code></td></tr>
+        <tr><td><code>depth_endpoint</code></td><td><code>tcp://host.docker.internal:5551</code></td></tr>
+        <tr><td><code>publish_rate_hz</code></td><td>15.0</td></tr>
+        <tr><td><code>color_frame_id</code> / <code>depth_frame_id</code></td><td><code>camera_color</code> / <code>camera_depth</code></td></tr>
+        <tr><td><code>capture_dir</code></td><td><code>/ws/vision_workspace/operation/captures</code></td></tr>
+        <tr><td><code>intrinsics_file</code></td><td><code>/ws/vision_workspace/operation/camera_intrinsics.json</code></td></tr>
+      </table>
+      <h4>Health</h4>
+      <p class="kv">ERROR when either stream is older than 2 s. Metrics: <code>color_hz</code>, <code>depth_hz</code>, <code>*_age_s</code>, <code>*_dropped</code>, <code>intrinsics_published</code>.</p>
+    </div>
+  </div>
+</div>
+
+<!-- detector_node -->
+<div class="node" id="n-detector">
+  <header><h3>detector_node</h3><span class="tag cpp">C++</span><span class="meta">package <code>cobot_detector</code> · <code>src/detector_node.cpp</code>, <code>onnx_detector.cpp</code>, <code>model_registry.cpp</code>, <code>letterbox.cpp</code>, <code>postprocess.cpp</code></span></header>
+  <p>
+    Perception in pixel space only — "no geometry, no millimetres". Holds one ONNX Runtime session
+    per model id listed in <code>models.yaml</code> (<code>runtime:</code> and <code>calibration:</code> sections;
+    <code>preload</code> loads some at start, the rest lazily). Input geometry is read from the graph
+    (<code>[1,3,H,W]</code>), and each model is cross-checked against the <code>manifest.yaml</code> next to the
+    <code>.onnx</code> so a mislabelled export fails at load rather than at pick time. Supports three head layouts:
+    <code>raw</code> (<code>[1, 4+nc(+1), N]</code>, NMS in node), <code>end2end</code> (<code>[1, max_det, 6|7]</code>, NMS in graph —
+    the <code>cans</code> OBB model) and <code>seg</code> (YOLOE, boxes only). Each accepted <code>Detect</code> goal runs on its own thread;
+    only one may be in flight. The pure C++ core (<code>detector_core</code>) has gtests that run during the Docker build.
+  </p>
+  <div class="cols">
+    <div>
+      <h4>Subscribes</h4>
+      <table><tr><td><code>/camera/color/image_raw</code></td><td>rgb8 only; keeps the latest frame</td></tr></table>
+      <h4>Publishes</h4>
+      <table><tr><td><code>/vision/detections_px</code></td><td><code>ObbDetectionArray</code> — mirror of every action result, for the UI overlay</td></tr></table>
+      <h4>Action server</h4>
+      <table><tr><td><code>/vision/detect</code></td><td><code>Detect</code> — goal <code>model_id</code>; result <code>ObbDetectionArray</code> stamped with the frame it ran on + <code>inference_ms</code>; rejected when model unknown, no frame yet, or busy</td></tr></table>
+    </div>
+    <div>
+      <h4>Parameters</h4>
+      <table class="kv">
+        <tr><td><code>models_yaml</code></td><td><code>/ws/runtime_models/models.yaml</code></td></tr>
+        <tr><td><code>preload</code></td><td><code>["cans"]</code></td></tr>
+        <tr><td><code>intra_op_threads</code></td><td>0 (= all cores)</td></tr>
+      </table>
+      <h4>Models registered today</h4>
+      <table class="kv">
+        <tr><td><code>runtime: cans</code></td><td>OBB, conf 0.50, iou 0.40, ≤20, dedupe at 50 px — the production picker</td></tr>
+        <tr><td><code>runtime: green_light</code></td><td>bbox (YOLOE seg export), conf 0.35</td></tr>
+        <tr><td><code>calibration: red_dot</code></td><td>bbox, calibration marker — <b>.onnx not exported yet</b>, hence manual dot selection</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- localization_node -->
+<div class="node" id="n-localization">
+  <header><h3>localization_node</h3><span class="tag py">Python</span><span class="meta">package <code>cobot_vision</code> · <code>cobot_vision/localization_node.py</code>, <code>calibration.py</code>, <code>pathing.py</code>, <code>rotation.py</code></span></header>
+  <p>
+    Where pixels become robot coordinates. Keeps a ring buffer of the last <code>depth_buffer_size</code> depth
+    frames and the fitted camera→robot transform from <code>calibration.yaml</code>
+    (<code>[X,Y,Z]ᵀ = M · [u·d, v·d, d, 1]ᵀ</code>, 3×4, mm). A <code>Scan</code> goal fans out to
+    <code>/vision/detect</code>, then for every detection: median depth in a window around the centre,
+    matrix multiply, OBB angle → rz in robot convention, snake ordering along <code>pathing_row_axis</code>.
+    The same depth machinery backs <code>verify_target</code> (is the can still there?) and
+    <code>get_layer_height</code>. It also owns the calibration <em>math</em> (task_manager owns the sequencing):
+    <code>begin</code> clears samples, <code>sample{x,y,z}</code> locates the tool marker (red_dot model or manual click)
+    and pairs it with the commanded TCP + <code>marker_offset_mm</code>, <code>compute</code> fits either a full 12-parameter
+    least squares (<code>require_intrinsics: false</code>) or a Kabsch extrinsic fit with SDK intrinsics, rejects fits above
+    <code>calibration_max_rms_mm</code>, and persists the result.
+  </p>
+  <div class="cols">
+    <div>
+      <h4>Subscribes</h4>
+      <table>
+        <tr><td><code>/camera/depth/image_raw</code></td><td>int16 ring buffer</td></tr>
+        <tr><td><code>/camera/color/camera_info</code></td><td>latched; needed for the extrinsic fitter</td></tr>
+        <tr><td><code>/vision/manual_dot_click</code></td><td><code>geometry_msgs/PointStamped</code> (color pixels) from web_node</td></tr>
+        <tr><td><code>/vision/manual_dot_skip</code></td><td><code>std_msgs/Empty</code></td></tr>
+      </table>
+      <h4>Publishes</h4>
+      <table>
+        <tr><td><code>/vision/targets</code></td><td><code>TargetArray</code> frame <code>robot_base</code></td></tr>
+        <tr><td><code>/vision/manual_dot_request</code></td><td><code>std_msgs/Bool</code> latched — asks the UI for a click</td></tr>
+      </table>
+      <h4>Action server / client</h4>
+      <table>
+        <tr><td><code>/vision/scan</code> (server)</td><td><code>Scan</code> — rejected if uncalibrated, no depth, detector absent, or busy</td></tr>
+        <tr><td><code>/vision/detect</code> (client)</td><td><code>Detect</code></td></tr>
+      </table>
+      <h4>Serves</h4>
+      <table>
+        <tr><td><code>/vision/verify_target</code></td><td><code>VerifyTarget</code></td></tr>
+        <tr><td><code>/vision/get_layer_height</code></td><td><code>GetLayerHeight</code></td></tr>
+        <tr><td><code>/vision/calibration_begin</code></td><td><code>std_srvs/Trigger</code></td></tr>
+        <tr><td><code>/vision/calibration_sample</code></td><td><code>CalibrationSample</code></td></tr>
+        <tr><td><code>/vision/calibration_compute</code></td><td><code>std_srvs/Trigger</code></td></tr>
+      </table>
+    </div>
+    <div>
+      <h4>Parameters (shipped values)</h4>
+      <table class="kv">
+        <tr><td><code>default_model_id</code> / <code>dot_model_id</code></td><td><code>cans</code> / <code>red_dot</code></td></tr>
+        <tr><td><code>pathing_row_axis</code>, <code>pathing_row_tolerance_mm</code></td><td><code>y</code>, 50</td></tr>
+        <tr><td><code>can_height_mm</code>, <code>depth_at_top_layer_mm</code></td><td>87, 1900 (for layer index)</td></tr>
+        <tr><td><code>depth_buffer_size</code>, <code>depth_sample_window_px</code></td><td>15, 10</td></tr>
+        <tr><td><code>verify_tolerance_mm</code></td><td>40</td></tr>
+        <tr><td><code>marker_offset_mm</code></td><td>[0, 0, 300] — dot relative to commanded TCP</td></tr>
+        <tr><td><code>dot_samples_per_pose</code>, <code>calibration_min_samples</code>, <code>calibration_max_rms_mm</code></td><td>3, 6, 5.0</td></tr>
+        <tr><td><code>require_intrinsics</code></td><td>false (SDK fx/fy are wrong on this camera)</td></tr>
+        <tr><td><code>manual_dot_selection</code>, <code>manual_click_timeout_sec</code></td><td>true, 120</td></tr>
+        <tr><td><code>calibration_file</code></td><td>injected by launch → <code>config/calibration.yaml</code></td></tr>
+      </table>
+      <h4>Health</h4>
+      <p class="kv">ERROR while no calibration is loaded. Metrics include <code>rms_*_mm</code>, <code>calibration_source</code>, <code>depth_buffer_age_s</code>, <code>detector_ready</code>, <code>manual_click_waiting</code>.</p>
+    </div>
+  </div>
+</div>
+
+<!-- task_manager -->
+<div class="node" id="n-tasks">
+  <header><h3>task_manager</h3><span class="tag py">Python</span><span class="meta">package <code>cobot_tasks</code> · <code>task_manager_node.py</code>, <code>context.py</code>, <code>system_state.py</code>, <code>workflows/{base,pick_layer,calibration}.py</code></span></header>
+  <p>
+    The orchestrator. Workflows are plain Python classes that declare the clients and parameters they
+    need and a <code>run(ctx)</code> that calls them in order through a <code>WorkflowContext</code> (no rclpy in
+    workflow code). The node creates one client per declared <code>ClientSpec</code>, runs a single workflow at a time,
+    publishes progress, and implements stop by cancelling the in-flight goal. Once a second it re-derives
+    <code>SystemState</code>: robot side from <code>/cobot/state</code> freshness, vision side from
+    <code>/health/summary</code> (camera OK, calibrated, depth fresh, detector OK) — and lists which workflows are
+    <em>ready</em> given the resulting capability bitmask (<code>SEE=1</code>, <code>MOVE=2</code>, <code>OPERATE=3</code>).
+    The UI's buttons are literally rendered from <code>/task/workflows</code>.
+  </p>
+  <div class="cols">
+    <div>
+      <h4>Serves</h4>
+      <table>
+        <tr><td><code>/task/start_workflow</code></td><td><code>StartWorkflow{workflow}</code></td></tr>
+        <tr><td><code>/task/start</code></td><td><code>Trigger</code> — runs <code>default_workflow</code></td></tr>
+        <tr><td><code>/task/stop</code></td><td><code>Trigger</code> — cancels the running goal</td></tr>
+        <tr><td><code>/task/calibrate</code></td><td><code>Trigger</code> — runs <code>calibration</code></td></tr>
+      </table>
+      <h4>Calls</h4>
+      <table>
+        <tr><td><code>/vision/scan</code></td><td>action <code>Scan</code></td></tr>
+        <tr><td><code>/cobot/pick_can</code></td><td>action <code>PickCan</code></td></tr>
+        <tr><td><code>/cobot/move_to_pose</code></td><td>action <code>MoveToPose</code> (calibration grid)</td></tr>
+        <tr><td><code>/vision/verify_target</code></td><td>service, optional</td></tr>
+        <tr><td><code>/vision/calibration_begin|sample|compute</code></td><td>services</td></tr>
+      </table>
+      <h4>Subscribes</h4>
+      <table>
+        <tr><td><code>/cobot/status</code>, <code>/cobot/state</code></td><td>robot readiness</td></tr>
+        <tr><td><code>/health/summary</code></td><td>vision readiness</td></tr>
+      </table>
+    </div>
+    <div>
+      <h4>Publishes</h4>
+      <table>
+        <tr><td><code>/task/status</code></td><td><code>TaskStatus</code> latched — IDLE / SCANNING / PICKING / CALIBRATING / STOPPING / ERROR + progress</td></tr>
+        <tr><td><code>/task/system_state</code></td><td><code>SystemState</code> latched — capability + blockers</td></tr>
+        <tr><td><code>/task/workflows</code></td><td><code>WorkflowList</code> latched</td></tr>
+        <tr><td><code>/task/pick_event</code></td><td><code>PickEvent</code> per can</td></tr>
+        <tr><td><code>/task/layer_report</code></td><td><code>LayerReport</code> per run</td></tr>
+      </table>
+      <h4>Workflows</h4>
+      <table class="kv">
+        <tr><td><code>pick_layer</code></td><td>scan → pick each → verify → report (requires OPERATE)</td></tr>
+        <tr><td><code>calibration</code></td><td>full grid: <code>calibration_grid_size</code> × <code>calibration_z_levels_mm</code></td></tr>
+        <tr><td><code>startup_calibration</code></td><td>small grid at boot when <code>auto_calibrate_on_startup</code> (arm moves at launch)</td></tr>
+      </table>
+      <h4>Key parameters</h4>
+      <p class="kv"><code>default_workflow</code>, <code>scan_timeout_sec</code> 30, <code>scan_model_id</code>, <code>calibration_x_range_mm</code>, <code>calibration_y_range_mm</code>, <code>calibration_z_levels_mm</code> (floats!), <code>calibration_grid_size</code>, <code>calibration_orientation_deg</code>, <code>calibration_sample_timeout_sec</code> 180, <code>startup_calibration_*</code>.</p>
+    </div>
+  </div>
+</div>
+
+<!-- cobot_operation -->
+<div class="node" id="n-operation">
+  <header><h3>cobot_operation</h3><span class="tag py">Python</span><span class="meta">package <code>cobot_operation</code> · <code>operation_node.py</code>, <code>primitives.py</code>, <code>choreography.py</code>, <code>geometry.py</code>, <code>report.py</code>, <code>setup_config.py</code></span></header>
+  <p>
+    The pick-and-place choreography, kept in Python so it is easy to change. It knows nothing about
+    YMConnect: its primitives are <code>move(pose, profile)</code> (a <code>MoveToPose</code> goal),
+    <code>set_output(name, value)</code> (a <code>SetOutputBit</code> call) and <code>wait_for_sensor(name, expected)</code>
+    (watch <code>/cobot/state</code> until the named input matches). <code>choreography.py</code> sequences them through
+    <code>check → approach → grip → lift → place</code> using the active tool profile from <code>cobot_setup.yaml</code>
+    (<code>tip_offset_mm</code>, <code>pick_tip_z_mm</code>, <code>approach_tip_z_mm</code>, <code>descend_profile</code>) and the taught place
+    trajectories in <code>trajectories.json</code> (<code>check</code>, <code>left</code>, <code>right</code>, <code>left_flip</code>, <code>right_flip</code>).
+    The result carries a <code>JobResult</code> per primitive and a <code>SensorAssert</code> per check so the UI can show exactly where a pick failed.
+  </p>
+  <div class="cols">
+    <div>
+      <h4>Action server</h4>
+      <table><tr><td><code>/cobot/pick_can</code></td><td><code>PickCan</code> — one goal at a time; accepted only when <code>/cobot/status == IDLE</code>; feedback = phase</td></tr></table>
+      <h4>Calls</h4>
+      <table>
+        <tr><td><code>/cobot/move_to_pose</code></td><td>action <code>MoveToPose</code></td></tr>
+        <tr><td><code>/cobot/set_output_bit</code></td><td>service, <code>name="gripper"</code></td></tr>
+      </table>
+      <h4>Subscribes</h4>
+      <table>
+        <tr><td><code>/cobot/status</code></td><td>latched, goal gating</td></tr>
+        <tr><td><code>/cobot/state</code></td><td>named sensors / outputs / pause latch</td></tr>
+      </table>
+    </div>
+    <div>
+      <h4>Parameters</h4>
+      <table class="kv">
+        <tr><td><code>setup_file</code></td><td>injected → <code>config/cobot_setup.yaml</code> (required)</td></tr>
+        <tr><td><code>trajectories_file</code></td><td>injected → <code>config/trajectories.json</code> (required)</td></tr>
+        <tr><td><code>active_tool</code></td><td>"" = use the file's <code>active_tool</code> (<code>vacuum_head</code>)</td></tr>
+        <tr><td><code>move_timeout_s</code></td><td>120</td></tr>
+        <tr><td><code>service_timeout_s</code></td><td>5</td></tr>
+        <tr><td><code>sensor_assert_timeout_s</code></td><td>1.0</td></tr>
+      </table>
+      <h4>Named IO it expects (cobot_setup.yaml)</h4>
+      <p class="kv">output <code>gripper</code>; inputs <code>existance_check</code>, <code>divot_check</code>, <code>right_complete</code>, <code>left_complete</code> (bit assignments are placeholders until verified on the cell).</p>
+    </div>
+  </div>
+</div>
+
+<!-- cobot_control -->
+<div class="node" id="n-control">
+  <header><h3>cobot_control</h3><span class="tag cpp">C++</span><span class="meta">package <code>cobot_control</code> · <code>src/cobot_control_node.cpp</code>, <code>motoman_robot.cpp</code>, <code>setup_config.cpp</code>, <code>third_party/YMConnect/</code></span></header>
+  <p>
+    The hardware driver and the <b>only process that holds a YMConnect session</b> to the YRC1000.
+    On start it <code>OpenConnection(robot_ip)</code>, turns servos on and clears any stale trajectory, then retries
+    every <code>connect_retry_period_s</code> if the link drops. A timer polls the controller every
+    <code>poll_period_s</code> (10 Hz): <code>ReadState</code> (servo / running / hold / alarm / error / control mode),
+    one <code>ReadByte</code> per IO group covering every named sensor and output from <code>cobot_setup.yaml</code>,
+    <code>ReadPositionData</code> for the TCP pose, and <code>GetActiveAlarms</code> when alarming — all folded into one
+    <code>CobotState</code> message that everyone else reads instead of touching the controller. Motion is
+    trajectory-point based, not INFORM-job based: a <code>MoveToPose</code> resolves a named motion profile, optionally
+    checks reachability through the kinematics API, calls <code>AddPointToTrajectory</code> + <code>MotionStart</code>, and reports
+    progress until reached, stopped, alarmed or timed out. Pause/resume is <code>MotionStop(false)</code>/<code>MotionStart()</code>
+    (or the HOLD signal when <code>pause_uses_hold</code>). Status transitions can be mirrored on the teach pendant.
+  </p>
+  <div class="cols">
+    <div>
+      <h4>Publishes</h4>
+      <table>
+        <tr><td><code>/cobot/state</code></td><td><code>CobotState</code> at 10 Hz — the single source of truth for controller state, IO and pose</td></tr>
+        <tr><td><code>/cobot/status</code></td><td><code>CobotStatus</code> latched — DISCONNECTED / IDLE / BUSY / ERROR</td></tr>
+      </table>
+      <h4>Action server</h4>
+      <table><tr><td><code>/cobot/move_to_pose</code></td><td><code>MoveToPose</code> — rejected when disconnected, alarming, servos off, TEACH mode, or busy. Abort codes: 1 link lost, 2 unreachable, 3 motion_stop, 4 alarm, 5 timeout, 6 shutdown</td></tr></table>
+      <h4>Services (17)</h4>
+      <table>
+        <tr><td>IO</td><td><code>/cobot/set_output_bit</code>, <code>/cobot/read_io_bit</code></td></tr>
+        <tr><td>Motion</td><td><code>/cobot/motion_stop</code>, <code>/cobot/set_motion_profile</code>, <code>/cobot/pause</code>, <code>/cobot/resume</code>, <code>/cobot/clear_trajectory</code></td></tr>
+        <tr><td>Controller</td><td><code>/cobot/servo_on</code>, <code>/cobot/servo_off</code>, <code>/cobot/clear_faults</code>, <code>/cobot/reconnect</code>, <code>/cobot/get_active_alarms</code>, <code>/cobot/get_current_pose</code></td></tr>
+        <tr><td>Variables</td><td><code>/cobot/read_int_var</code>, <code>/cobot/write_int_var</code>, <code>/cobot/read_position_var</code>, <code>/cobot/write_position_var</code></td></tr>
+      </table>
+    </div>
+    <div>
+      <h4>Parameters</h4>
+      <table class="kv">
+        <tr><td><code>robot_ip</code></td><td><code>192.168.1.31</code></td></tr>
+        <tr><td><code>setup_file</code></td><td>injected → <code>config/cobot_setup.yaml</code> (required, throws if empty)</td></tr>
+        <tr><td><code>poll_period_s</code></td><td>0.1</td></tr>
+        <tr><td><code>connect_retry_period_s</code> / <code>connect_timeout_ms</code> / <code>connect_retries</code></td><td>1.0 / 500 / 3</td></tr>
+        <tr><td><code>motion_timeout_s</code></td><td>100 (moving time; task_manager budgets 120)</td></tr>
+        <tr><td><code>pause_uses_hold</code></td><td>false</td></tr>
+        <tr><td><code>check_reachability</code></td><td>true (IK check before every move)</td></tr>
+        <tr><td><code>pendant_messages</code></td><td>true</td></tr>
+        <tr><td><code>ymconnect_logging</code></td><td>false</td></tr>
+      </table>
+      <h4>cobot_setup.yaml (shared with cobot_operation)</h4>
+      <p class="kv"><code>io.outputs</code> / <code>io.sensors</code> (name → type, group, bit) · <code>motion_profiles</code> (<code>default</code> joint 25 %, <code>descend</code> linear 100 mm/s, accuracy 0) · <code>tools.vacuum_head</code> (<code>tip_offset_mm [0,0,-600]</code>, <code>marker_offset_mm [0,0,300]</code>, pick/approach tip z) · <code>active_tool</code>.</p>
+    </div>
+  </div>
+</div>
+
+<!-- web_node -->
+<div class="node" id="n-web">
+  <header><h3>web_node</h3><span class="tag py">Python</span><span class="meta">package <code>cobot_web</code> · <code>web_node.py</code>, <code>templates/index.html</code>, <code>static/app.js</code>, <code>static/commands.js</code></span></header>
+  <p>
+    Operator dashboard. A FastAPI app served by uvicorn on the main thread with rclpy spinning on a
+    background thread. It subscribes to nearly everything, JPEG-encodes the latest color and
+    (min-max normalised) depth frames at <code>web_stream_hz</code>, and pushes JSON messages over a single
+    WebSocket (<code>/ws</code>); on connect it replays the latched state so a fresh tab is immediately correct.
+    Browser commands arrive as <code>{receiver, command, payload}</code> and are routed to Trigger /
+    StartWorkflow services or to the manual-calibration click topics. <code>GET/POST /api/config</code>
+    reads and rewrites <code>cobot_params.yaml</code> and live-applies changes through each node's
+    <code>set_parameters</code> service.
+  </p>
+  <div class="cols">
+    <div>
+      <h4>Subscribes</h4>
+      <p class="kv"><code>/camera/color/image_raw</code>, <code>/camera/depth/image_raw</code>, <code>/vision/detections_px</code>, <code>/vision/targets</code>, <code>/vision/manual_dot_request</code>, <code>/task/status</code>, <code>/task/system_state</code>, <code>/task/workflows</code>, <code>/task/pick_event</code>, <code>/task/layer_report</code>, <code>/health/summary</code></p>
+      <h4>Publishes</h4>
+      <table>
+        <tr><td><code>/vision/manual_dot_click</code></td><td><code>PointStamped</code> — operator clicked the marker</td></tr>
+        <tr><td><code>/vision/manual_dot_skip</code></td><td><code>Empty</code></td></tr>
+      </table>
+      <h4>Calls</h4>
+      <p class="kv"><code>/task/start</code>, <code>/task/stop</code>, <code>/task/calibrate</code>, <code>/camera/save_frames</code> (Trigger), <code>/task/start_workflow</code>, <code>/&lt;node&gt;/set_parameters</code></p>
+    </div>
+    <div>
+      <h4>HTTP / WebSocket</h4>
+      <table class="kv">
+        <tr><td><code>GET /</code></td><td>dashboard</td></tr>
+        <tr><td><code>WS /ws</code></td><td>types out: <code>camera_frame</code>, <code>targets</code>, <code>detections</code>, <code>cobot_status</code>, <code>system_state</code>, <code>workflows</code>, <code>pick_event</code>, <code>layer_report</code>, <code>health</code>, <code>manual_dot_request</code>, <code>command_result</code></td></tr>
+        <tr><td>WS commands in</td><td><code>COBOT/start|stop|calibrate|start_workflow</code>, <code>CAMERA/save|snapshot</code>, <code>VISION/click_center|skip_center</code></td></tr>
+        <tr><td><code>GET/POST /api/config</code></td><td>params YAML round-trip + live apply</td></tr>
+        <tr><td><code>GET /api/latest-image</code>, <code>/results</code>, <code>/static</code></td><td>files</td></tr>
+      </table>
+      <h4>Parameters</h4>
+      <p class="kv"><code>port</code> 8000 · <code>web_stream_hz</code> 15 · <code>results_dir</code> · <code>params_file</code> (injected)</p>
+    </div>
+  </div>
+</div>
+
+<!-- health_monitor -->
+<div class="node" id="n-health">
+  <header><h3>health_monitor</h3><span class="tag py">Python</span><span class="meta">package <code>cobot_health</code> · <code>health_monitor_node.py</code>, <code>heartbeat.py</code> (the <code>HeartbeatPublisher</code> helper every Python node embeds; the C++ nodes re-implement it)</span></header>
+  <p>
+    Collects every <code>Heartbeat</code> and publishes one latched <code>HealthSummary</code> per second. A node in
+    <code>expected_nodes</code> that has never reported is <code>UNKNOWN</code>; one whose last heartbeat is older than
+    <code>stale_factor × period_s</code> is <code>STALE</code>; otherwise its own level (OK / WARN / ERROR) and metrics are passed through.
+    The summary's <code>level</code> is the worst across nodes, with STALE/UNKNOWN counting as ERROR. task_manager reads it to
+    decide whether the vision side is usable; web_node shows it as the health panel.
+  </p>
+  <div class="cols">
+    <div>
+      <h4>Subscribes</h4><table><tr><td><code>/health/heartbeat</code></td><td><code>Heartbeat</code>, RELIABLE keep-last 10</td></tr></table>
+      <h4>Publishes</h4><table><tr><td><code>/health/summary</code></td><td><code>HealthSummary</code> latched</td></tr></table>
+    </div>
+    <div>
+      <h4>Parameters</h4>
+      <table class="kv">
+        <tr><td><code>expected_nodes</code></td><td>the 8 launched node names</td></tr>
+        <tr><td><code>stale_factor</code></td><td>3.0</td></tr>
+        <tr><td><code>summary_period_s</code></td><td>1.0</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<h2 id="external">7. External components</h2>
+
+<h3 id="streamer">7.1 Astra ZMQ streamer (host side, C + Orbbec Astra SDK)</h3>
+<p>
+  A small standalone C program that lives outside this repository (its ancestors are the Astra SDK
+  <code>ColorReaderPoll</code> / <code>DepthReaderPoll</code> C-API samples vendored under <code>legacy/cpp/third_party/AstraSDK/samples/</code>;
+  the SDK manual is <code>docs/dependancies/orbbec_devices/AstraSDK_Doc_en.chm</code>). It is the only code that
+  touches the camera: the container never opens USB, which keeps the Docker image portable and lets the camera driver
+  be restarted independently. The contract <code>camera_node</code> expects is:
+</p>
+<table>
+  <tr><th>Item</th><th>Contract</th></tr>
+  <tr><td>Sockets</td><td>Two <code>ZMQ PUB</code> sockets, <code>bind tcp://*:5550</code> (color) and <code>tcp://*:5551</code> (depth). The container is the SUB/client and connects out to <code>host.docker.internal</code>; no ports are published for it in compose.</td></tr>
+  <tr><td>Latency rule</td><td><code>zmq_setsockopt(ZMQ_SNDHWM, 1)</code> <b>before</b> <code>bind</code>, so a slow subscriber gets the newest frame instead of a growing queue.</td></tr>
+  <tr><td>Framing</td><td>Multipart: part 1 = header, part 2 = payload (<code>SNDMORE</code>). camera_node also accepts header+payload in one message and the legacy two-message form.</td></tr>
+  <tr><td>Header</td><td>Packed little-endian <code>struct "&lt;BIHHBI"</code> = 12 bytes: <code>uint8 stream_type</code> (0 color, else depth), <code>uint32 frame_index</code>, <code>uint16 width</code>, <code>uint16 height</code>, <code>uint8 channels</code>, <code>uint32 payload_size</code>. Payload length must equal <code>payload_size</code> or the frame is dropped.</td></tr>
+  <tr><td>Color payload</td><td><code>uint8 [h][w][channels]</code>, RGB order, 640×480 — republished as <code>rgb8</code>.</td></tr>
+  <tr><td>Depth payload</td><td><code>int16 [h][w]</code> millimetres, <b>registered/aligned to the color image</b> so pixel (u,v) is the same point in both streams; <code>0</code> = no reading. Republished unchanged as <code>16SC1</code>.</td></tr>
+  <tr><td>Intrinsics</td><td>Writes <code>vision_workspace/operation/camera_intrinsics.json</code> = <code>{"fx","fy","cx","cy","width":640,"height":480}</code> for the <b>color</b> stream, read by camera_node into <code>/camera/color/camera_info</code>. Note: this camera's SDK reports fx/fy that disagree with measured data, which is why calibration ships with <code>require_intrinsics: false</code>.</td></tr>
+</table>
+<p>A minimal publish loop, for orientation:</p>
+<pre><code>// per frame, after astra_reader_get_next_frame / astra_frame_get_colorframe|depthframe
+hdr.stream_type  = 0 /* color */ or 1 /* depth */;
+hdr.frame_index  = frame_index++;
+hdr.width = 640; hdr.height = 480;
+hdr.channels     = 3 /* color */ or 1 /* depth */;
+hdr.payload_size = width * height * channels * bytes_per_sample;   // 921600 color, 614400 depth
+zmq_send(pub, &amp;hdr, 12, ZMQ_SNDMORE);
+zmq_send(pub, pixels, hdr.payload_size, 0);
+</code></pre>
+
+<h3 id="yrc1000">7.2 Yaskawa YRC1000 controller + Motoman cobot</h3>
+<p>
+  The robot controller sits on the cell LAN at <code>192.168.1.31</code> (parameter <code>cobot_control.robot_ip</code>).
+  It is driven through Yaskawa's <b>YMConnect</b> SDK (vendored <code>libYMConnect.so</code> + <code>YMConnect.h</code>
+  in <code>ros2_ws/src/cobot_control/third_party/YMConnect/</code>), which speaks the controller's high-speed Ethernet
+  server protocol. Only <code>cobot_control</code> links against it; everything else in the graph sees the robot as
+  <code>/cobot/state</code>, <code>/cobot/status</code>, the <code>MoveToPose</code> action and the <code>/cobot/*</code> services.
+</p>
+<table>
+  <tr><th>Concern</th><th>How it is handled</th></tr>
+  <tr><td>Session</td><td><code>YMConnect::OpenConnection(ip, timeout 500 ms, 3 retries)</code>; <code>SetServos(ON)</code>; <code>ClearAllTrajectory()</code>. Reconnect loop every 1 s on failure; <code>/cobot/reconnect</code> forces it.</td></tr>
+  <tr><td>State (10 Hz)</td><td><code>Status-&gt;ReadState</code> → servo_on / running / in_hold / alarming / erroring / control mode (TEACH / PLAY / REMOTE). Moves are refused in TEACH.</td></tr>
+  <tr><td>Motion</td><td>Cartesian targets in the <b>base frame</b> (mm, deg) for control group <code>R1</code> with the active tool file: <code>AddPointToTrajectory(JointMotion|LinearMotion, speed VJ % | V mm/s, accuracy_mm, accel/decel ratios)</code> → <code>MotionStart()</code> → poll <code>GetMotionTargetProgress</code> / <code>GetRemainingStepsInTrajectory</code>. No INFORM jobs are started; the controller executes points the node streams.</td></tr>
+  <tr><td>Reachability</td><td><code>Kinematics-&gt;ConvertPositionFromCartesian(… CartesianPosToJointAngle …)</code> before each move when <code>check_reachability</code>.</td></tr>
+  <tr><td>IO</td><td>General inputs / outputs addressed by (group, bit) and given names in <code>cobot_setup.yaml</code>: output <code>gripper</code> (g1/b2, vacuum), inputs <code>existance_check</code>, <code>divot_check</code>, <code>right_complete</code>, <code>left_complete</code> (g1/b3–b6, placeholders). <code>Io-&gt;ReadByte</code> in the poll, <code>Io-&gt;WriteBit</code> on <code>/cobot/set_output_bit</code>.</td></tr>
+  <tr><td>Pose</td><td><code>ControlGroup-&gt;ReadPositionData(R1, BaseCoordinate, tool_number)</code> → <code>CobotState.x…rz</code>.</td></tr>
+  <tr><td>Faults</td><td><code>Faults-&gt;GetActiveAlarms</code> (into <code>CobotState.alarms</code>) and <code>ClearAllFaults</code> via <code>/cobot/clear_faults</code>.</td></tr>
+  <tr><td>Pause / stop</td><td><code>MotionStop(clear_trajectory)</code> / <code>MotionStart()</code>; optionally <code>SetHold</code>. <code>/task/stop</code> → cancel PickCan → cancel MoveToPose → <code>MotionStop</code>.</td></tr>
+  <tr><td>Operator feedback</td><td><code>DisplayStringToPendant</code> mirrors status transitions on the teach pendant (30-char limit).</td></tr>
+</table>
+
+<!-- ===================================================================== -->
+<h2 id="interfaces">8. Interface reference (<code>cobot_interfaces</code>)</h2>
+<p>
+  Frames and units: pixel-space messages carry no units; robot-space values are millimetres and degrees in the robot base frame.
+  Everything generated from <code>ros2_ws/src/cobot_interfaces/{msg,srv,action}/</code>.
+</p>
+
+<h3>Actions</h3>
+<div class="iface">
+  <div><h4>Detect.action</h4><div class="use">detector_node serves · localization_node calls</div>
+<pre>goal:     string model_id
+result:   bool success
+          string message
+          ObbDetectionArray detections   # stamp = color frame used
+          float32 inference_ms
+feedback: string stage   # loading_model|preprocess|inference|postprocess</pre></div>
+  <div><h4>Scan.action</h4><div class="use">localization_node serves · task_manager calls</div>
+<pre>goal:     string model_id     # "" = default_model_id
+result:   bool success
+          string message
+          TargetArray targets  # robot frame, pick order
+feedback: string stage         # detecting | localizing</pre></div>
+  <div><h4>PickCan.action</h4><div class="use">cobot_operation serves · task_manager calls</div>
+<pre>goal:     Target target
+result:   bool success
+          string message
+          string phase                 # phase it ended in
+          JobResult[] jobs
+          SensorAssert[] sensor_asserts
+feedback: string phase   # check|approach|grip|lift|place</pre></div>
+  <div><h4>MoveToPose.action</h4><div class="use">cobot_control serves · cobot_operation, task_manager call</div>
+<pre>goal:     float64 x y z rx ry rz       # base frame, mm / deg
+          string motion_profile        # name from cobot_setup.yaml
+          float64 speed 0.0            # 0 = profile's
+          uint8 interpolation 0        # DEFAULT|JOINT|LINEAR
+          int32 accuracy_mm -2         # -2 unchanged, -1 rounds, 0 exact
+          int32 tool_number -1
+result:   bool success
+          int32 status_code
+          string message
+feedback: float32 progress_percent
+          int32 steps_remaining
+          bool paused</pre></div>
+</div>
+
+<h3>Messages — vision</h3>
+<div class="iface">
+  <div><h4>ObbDetection.msg</h4><div class="use">pixel space only</div>
+<pre>int32 class_id
+float32 confidence
+float32 center_x
+float32 center_y
+float32 angle          # rad, ultralytics convention; 0 for bbox
+float32[8] corners_px  # x1,y1..x4,y4 — TL,TR,BR,BL</pre></div>
+  <div><h4>ObbDetectionArray.msg</h4><div class="use">/vision/detections_px · Detect result</div>
+<pre>std_msgs/Header header   # stamp = color frame
+string model_id          # models.yaml id
+uint32 image_width
+uint32 image_height
+ObbDetection[] detections</pre></div>
+  <div><h4>Target.msg</h4><div class="use">robot space — one pick goal</div>
+<pre>int32 class_id
+float32 confidence
+float64 real_x            # mm, robot base
+float64 real_y
+float64 real_z            # top of object
+float64 real_rz           # deg about z
+int32 detection_index -1  # into the ObbDetectionArray</pre></div>
+  <div><h4>TargetArray.msg</h4><div class="use">/vision/targets · Scan result</div>
+<pre>std_msgs/Header header    # frame_id robot_base
+string model_id
+Target[] targets          # already in pick order</pre></div>
+</div>
+
+<h3>Messages — robot</h3>
+<div class="iface">
+  <div><h4>CobotState.msg</h4><div class="use">/cobot/state, 10 Hz — single source of truth</div>
+<pre>std_msgs/Header header
+bool connected           # false ⇒ everything else stale
+bool servo_on
+bool running
+bool in_hold
+bool alarming
+bool erroring
+uint8 control_mode       # TEACH=0 PLAY=1 REMOTE=2
+bool paused              # cobot_control pause latch
+bool busy                # a MoveToPose is executing
+string[] sensor_names    # from cobot_setup.yaml io.sensors
+bool[]   sensor_values
+string[] output_names
+bool[]   output_values
+float64 x y z rx ry rz   # TCP, base frame
+Alarm[] alarms           # only while alarming
+float32 poll_ms</pre></div>
+  <div><h4>CobotStatus.msg</h4><div class="use">/cobot/status, latched</div>
+<pre>uint8 STATE_DISCONNECTED=0
+uint8 STATE_IDLE=1
+uint8 STATE_BUSY=2
+uint8 STATE_ERROR=3
+std_msgs/Header header
+uint8 state
+string detail</pre></div>
+  <div><h4>Alarm.msg</h4><div class="use">one active YRC1000 alarm</div>
+<pre>uint32 code
+uint32 subcode
+string name
+string time</pre></div>
+  <div><h4>JobResult.msg</h4><div class="use">one primitive inside a PickCan</div>
+<pre>string job          # move|engage_gripper|disengage_gripper|sensor_read|sensor_assert
+bool ok
+int32 status_code   # 0 ok; 1 not connected; -1 transport; else YMConnect
+string message
+string payload</pre></div>
+  <div><h4>SensorAssert.msg</h4><div class="use">one named-input check</div>
+<pre>string name
+bool expected
+bool actual
+bool passed</pre></div>
+</div>
+
+<h3>Messages — task &amp; UI</h3>
+<div class="iface">
+  <div><h4>TaskStatus.msg</h4><div class="use">/task/status, latched</div>
+<pre>uint8 STATE_DISCONNECTED=0  IDLE=1  SCANNING=2
+uint8 PICKING=3  CALIBRATING=4  STOPPING=5  ERROR=6
+std_msgs/Header header
+uint8 state
+string detail
+string active_task
+uint32 progress_current
+uint32 progress_total</pre></div>
+  <div><h4>SystemState.msg</h4><div class="use">/task/system_state, latched</div>
+<pre>std_msgs/Header header
+uint8 capability          # CAP_NONE=0 SEE=1 MOVE=2 OPERATE=3
+string capability_name
+bool robot_state_fresh connected servo_on alarming
+bool erroring in_hold paused busy
+string control_mode       # teach/play/remote/-
+float32 robot_state_age_s
+bool health_fresh camera_ok calibrated depth_fresh detector_ok
+float32 health_age_s
+string[] move_blockers
+string[] see_blockers</pre></div>
+  <div><h4>PickEvent.msg</h4><div class="use">/task/pick_event, one per can</div>
+<pre>string OUTCOME_PICKED="picked" FAILED="failed" SKIPPED="skipped"
+std_msgs/Header header
+uint32 index              # 1-based in layer
+uint32 total
+int32 detection_index
+Target target
+string outcome
+bool verify_ran
+bool verified             # verify said can is gone
+float64 measured_z        # -1 if none
+string message</pre></div>
+  <div><h4>LayerReport.msg</h4><div class="use">/task/layer_report</div>
+<pre>std_msgs/Header header
+uint32 successes
+uint32 failures
+bool overall_ok</pre></div>
+  <div><h4>WorkflowInfo.msg / WorkflowList.msg</h4><div class="use">/task/workflows, latched — drives the UI buttons</div>
+<pre>WorkflowInfo:
+  string id  label  description
+  bool ready
+  string not_ready_reason
+  uint8 requires          # SystemState.CAP_* mask
+  string requires_name
+WorkflowList:
+  std_msgs/Header header
+  WorkflowInfo[] workflows
+  string default_workflow</pre></div>
+</div>
+
+<h3>Messages — health</h3>
+<div class="iface">
+  <div><h4>Heartbeat.msg</h4><div class="use">/health/heartbeat, every node, 2 s</div>
+<pre>uint8 LEVEL_OK=0 WARN=1 ERROR=2
+std_msgs/Header header
+string node_name       # launch name
+uint8 level
+string detail
+float32 period_s       # sender's own period
+KeyValue[] metrics</pre></div>
+  <div><h4>NodeHealth.msg / HealthSummary.msg</h4><div class="use">/health/summary, latched, 1 Hz</div>
+<pre>NodeHealth:
+  uint8 LEVEL_OK=0 WARN=1 ERROR=2 STALE=3 UNKNOWN=4
+  string node_name
+  uint8 level
+  string detail
+  float32 age_s          # -1 never seen
+  KeyValue[] metrics
+HealthSummary:
+  std_msgs/Header header
+  uint8 level            # worst node
+  NodeHealth[] nodes</pre></div>
+  <div><h4>KeyValue.msg</h4><div class="use">string metrics on purpose</div>
+<pre>string key
+string value</pre></div>
+</div>
+
+<h3>Services</h3>
+<table>
+  <tr><th>Service</th><th>Server</th><th>Request → Response</th></tr>
+  <tr><td><code>VerifyTarget</code></td><td>localization_node</td><td><code>Target target</code> → <code>bool present, float64 measured_z</code></td></tr>
+  <tr><td><code>GetLayerHeight</code></td><td>localization_node</td><td>— → <code>float64 median_z, int8 layer_index</code> (−1 unknown)</td></tr>
+  <tr><td><code>CalibrationSample</code></td><td>localization_node</td><td><code>float64 x y z</code> (commanded TCP) → <code>bool success, int32 sample_count, string message</code></td></tr>
+  <tr><td><code>StartWorkflow</code></td><td>task_manager</td><td><code>string workflow</code> → <code>bool success, string message</code></td></tr>
+  <tr><td><code>SetOutputBit</code></td><td>cobot_control</td><td><code>string name | (io_type, group, bit)</code>, <code>bool value</code> → <code>success, status_code, message</code></td></tr>
+  <tr><td><code>ReadIoBit</code></td><td>cobot_control</td><td><code>string name | (io_type, group, bit)</code> → <code>success, bool value, status_code, message</code></td></tr>
+  <tr><td><code>MotionStop</code></td><td>cobot_control</td><td><code>bool clear_trajectory</code> → <code>success, status_code, message</code></td></tr>
+  <tr><td><code>SetMotionProfile</code></td><td>cobot_control</td><td><code>name, interpolation, speed, accel_ratio, decel_ratio, accuracy_mm</code> → <code>success, status_code, message</code></td></tr>
+  <tr><td><code>GetCurrentPose</code></td><td>cobot_control</td><td>— → <code>success, x y z rx ry rz, status_code, message</code></td></tr>
+  <tr><td><code>GetActiveAlarms</code></td><td>cobot_control</td><td>— → <code>success, Alarm[] alarms, status_code, message</code></td></tr>
+  <tr><td><code>ReadIntVar</code> / <code>WriteIntVar</code></td><td>cobot_control</td><td><code>uint16 index [, int32 value]</code> → <code>success[, value], status_code, message</code></td></tr>
+  <tr><td><code>ReadPositionVar</code> / <code>WritePositionVar</code></td><td>cobot_control</td><td><code>uint16 index [, x y z rx ry rz]</code> → <code>success[, pose], status_code, message</code></td></tr>
+  <tr><td><code>std_srvs/Trigger</code></td><td>various</td><td><code>/task/start|stop|calibrate</code>, <code>/vision/calibration_begin|compute</code>, <code>/camera/save_frames</code>, <code>/cobot/pause|resume|servo_on|servo_off|clear_faults|clear_trajectory|reconnect</code></td></tr>
+</table>
+
+<!-- ===================================================================== -->
+<h2 id="runtime">9. Runtime, configuration &amp; health</h2>
+<div class="cols">
+  <div>
+    <h3>Docker</h3>
+    <p><code>docker/Dockerfile</code> has two stages. <b>builder</b> (<code>ros:humble</code>) installs apt/pip deps and ONNX Runtime 1.19.2 to <code>/opt/onnxruntime</code>, runs <code>rosdep</code> against the ten <code>package.xml</code>s, <code>colcon build --merge-install</code>, then <code>colcon test --packages-select cobot_detector</code> so a detector-core regression fails the image. <b>runtime</b> (<code>ros:humble-ros-core</code>) copies only <code>/ws/install</code>, sets <code>RMW_IMPLEMENTATION=rmw_cyclonedds_cpp</code> and runs <code>ros2 launch cobot_bringup robot.launch.py</code>.</p>
+    <p><code>docker-compose.yaml</code>: one service <code>cobot-ros</code>, <code>restart: unless-stopped</code>, publishes <code>8000:8000</code> only.</p>
+    <table class="kv">
+      <tr><td><code>./runtime_models</code></td><td>→ <code>/ws/runtime_models</code> — models.yaml + .onnx (never baked into the image)</td></tr>
+      <tr><td><code>./vision_workspace</code></td><td>→ <code>/ws/vision_workspace</code> — intrinsics JSON, captures, results</td></tr>
+      <tr><td><code>./ros2_ws/src/cobot_bringup/config</code></td><td>→ <code>/ws/install/share/cobot_bringup/config</code> — live-editable params, setup, trajectories, calibration</td></tr>
+    </table>
+  </div>
+  <div>
+    <h3>Configuration files</h3>
+    <table class="kv">
+      <tr><td><code>cobot_params.yaml</code></td><td>Every ROS parameter, per node. Edited by the UI's <code>/api/config</code>.</td></tr>
+      <tr><td><code>cobot_setup.yaml</code></td><td>Plain YAML read by cobot_control and cobot_operation: named IO, motion profiles, tool profiles.</td></tr>
+      <tr><td><code>trajectories.json</code></td><td>Taught poses for check / place (<code>right</code>, <code>right_flip</code>, <code>left</code>, <code>left_flip</code>, <code>await</code>, <code>check</code>).</td></tr>
+      <tr><td><code>calibration.yaml</code></td><td>Output of the calibration workflow: 3×4 matrix, rms per axis, sample count, source.</td></tr>
+      <tr><td><code>runtime_models/models.yaml</code></td><td>Detector registry: id → path, obb|bbox, thresholds.</td></tr>
+      <tr><td><code>camera_intrinsics.json</code></td><td>Written by the streamer, read by camera_node.</td></tr>
+    </table>
+    <h3>Health &amp; readiness chain</h3>
+    <p>node heartbeats → <code>health_monitor</code> summary → <code>task_manager</code> SystemState capability → <code>WorkflowInfo.ready</code> → UI button enabled. If a button is greyed out, <code>/task/system_state</code>'s <code>see_blockers</code> / <code>move_blockers</code> say why.</p>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<h2 id="gotchas">10. Gotchas for newcomers</h2>
+<ul>
+  <li><b>The arm can move at boot.</b> <code>task_manager.auto_calibrate_on_startup: true</code> runs the startup calibration grid as soon as the robot is ready. Disable it if unattended motion is unsafe in your cell.</li>
+  <li><b>Calibration lives in two places by design:</b> task_manager sequences the poses (<code>calibration_*</code> params), localization_node does the math (<code>marker_offset_mm</code>, fitters, rms gate). <code>marker_offset_mm</code> (dot vs TCP) and <code>tools.*.tip_offset_mm</code> (suction tip vs TCP) both hang off the same TCP — measure them separately.</li>
+  <li><b>Manual dot selection is temporary.</b> <code>manual_dot_selection: true</code> because the <code>red_dot</code> ONNX model has not been exported yet; the UI asks you to click the marker on each calibration pose. Keep <code>calibration_sample_timeout_sec</code> &gt; <code>manual_click_timeout_sec</code>.</li>
+  <li><b>Only cobot_control talks YMConnect.</b> Need a new robot capability? Add a service/action there and consume it from Python; never open a second connection.</li>
+  <li><b>Pixel vs robot messages are separate types on purpose.</b> <code>ObbDetection</code> has no millimetres; <code>Target</code> has no pixels (only <code>detection_index</code> back-references).</li>
+  <li><b>Streamer changes:</b> keep the <code>&lt;BIHHBI</code> header and depth aligned to color; the node tolerates framing changes but not header or unit changes.</li>
+  <li><b>YAML typing:</b> list parameters must be all floats (<code>500.0</code>, not <code>500</code>) or rclpy declares an integer array and the node refuses to start.</li>
+  <li><b>Running outside Docker</b> needs <code>cobot_setup.yaml</code> and <code>calibration.yaml</code> reachable — <code>cobot_bringup/setup.py</code> installs only <code>cobot_params.yaml</code> and <code>trajectories.json</code>; compose's bind mount supplies the rest.</li>
+  <li><code>motoman_cpp</code> is retired (<code>COLCON_IGNORE</code>); the old pybind route is history only. <code>legacy/</code> and the root <code>CMakeLists.txt</code> are reference material, not part of the build.</li>
+</ul>
+
+<footer>
+  Companion to <code>docs/ros2_architecture.md</code> (design rationale) and the top-level <code>README.md</code> (quick start, parameter tables).
+  Generated from the source tree as of 2026-08-30; when a topic name here disagrees with the code, the code wins — please update this page.
+</footer>
+</main>
+</body>
+</html>

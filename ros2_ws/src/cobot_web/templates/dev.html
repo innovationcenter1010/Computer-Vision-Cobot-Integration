@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Cobot Dev Panel</title>
+    <script>
+        // Stamp the theme on <html> before first paint (no flash of the wrong
+        // theme): stored choice, else the OS preference. dev.js toggles it.
+        (function () {
+            let theme = null;
+            try { theme = localStorage.getItem("cobot.theme"); } catch (e) { /* storage unavailable */ }
+            if (theme !== "light" && theme !== "dark") {
+                theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            }
+            document.documentElement.dataset.theme = theme;
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/style.css?v=17">
+</head>
+
+<body>
+    <header class="topbar">
+        <div class="brand"><span class="mark">CB</span>Cobot Dev Panel</div>
+        <span id="ws_status" class="pill pill-neutral"><span class="dot"></span>connecting…</span>
+        <div class="spacer"></div>
+        <a class="btn ghost sm" href="/">Operator Panel</a>
+        <button type="button" id="theme_toggle" class="btn ghost sm" onclick="toggleTheme()">theme</button>
+        <span class="eyebrow">Task</span>
+        <span id="task_pill" class="pill pill-neutral"><span class="dot"></span>waiting…</span>
+    </header>
+
+    <main class="page">
+        <div class="dev-stack">
+
+            <!-- No streams or job controls here — run jobs from the operator
+                 panel. The dev panel's websocket opts out of camera frames
+                 (/ws?frames=off) so tuning never competes with the streams. -->
+
+            <!-- ===================== tunable physical params ===================== -->
+            <section class="card">
+                <div class="card-head">
+                    <h2>Physical <span>Params</span></h2>
+                    <span class="mono">cobot_params.yaml — saved to disk + applied live, no restart</span>
+                </div>
+                <div id="param_list" class="dev-list">
+                    <p class="muted">loading cobot_params.yaml…</p>
+                </div>
+            </section>
+
+            <!-- ===================== cell setup (tools + motion) ===================== -->
+            <section class="card">
+                <div class="card-head">
+                    <h2>Cell <span>Setup</span></h2>
+                    <span class="mono">cobot_setup.yaml — saved to disk, applies on node restart</span>
+                </div>
+                <div id="setup_list" class="dev-list">
+                    <p class="muted">loading cobot_setup.yaml…</p>
+                </div>
+            </section>
+
+            <!-- ===================== trajectories ===================== -->
+            <section class="card">
+                <div class="card-head">
+                    <h2>Trajec<span>tories</span></h2>
+                    <span id="traj_meta" class="mono"></span>
+                    <div class="spacer"></div>
+                    <span class="eyebrow">Robot Now</span>
+                    <span id="live_pose" class="mono">no /cobot/state yet</span>
+                </div>
+                <div id="traj_list" class="dev-list">
+                    <p class="muted">loading trajectories.json…</p>
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <script type="module" src="/static/dev.js?v=2"></script>
+</body>
+</html>

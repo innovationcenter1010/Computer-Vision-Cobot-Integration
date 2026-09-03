@@ -1,0 +1,37 @@
+schema_version: 1
+name: yoloe_cobot_v1
+type: detector
+onnx: yoloe_cobot_v1.onnx
+onnx_sha256: cff3773cf9b18a783247b7b21a9a56992e30588fdaa1173437aab7e88d25b644
+input:
+  name: images
+  width: 640
+  height: 480
+  layout: nchw
+  normalize: div255
+output:
+  name: output0
+  layout: yolo_seg
+  box_channels: 4
+  mask_coeff_channels: 32
+  anchors: 6300
+unused_outputs:
+- output1
+classes:
+- green light
+- green dot
+- white robot
+- white light
+- mint light
+- signal light
+- green button
+- on button
+- go light
+- steel square
+- aluminum rectangle
+- metal box
+letterbox:
+  pad_value: 114
+defaults:
+  conf_threshold: 0.35
+  nms_iou: 0.5

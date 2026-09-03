@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>cobot_detector</name>
+  <version>0.1.0</version>
+  <description>
+    C++ perception node running YOLO models exported to ONNX through ONNX
+    Runtime. Pixel space only — no geometry, no millimeters.
+
+      action /vision/detect (Detect)   run one model (by models.yaml id) on
+                                       the latest color frame; result and
+                                       /vision/detections_px carry pixel boxes
+                                       stamped with the color frame used.
+
+    Models are declared in a bind-mounted models.yaml (runtime: / calibration:
+    sections). OBB and plain bounding-box heads both produce ObbDetection —
+    bbox models fill an axis-aligned rectangle with angle = 0.
+
+    ultralytics / torch are NOT dependencies of this package: training and
+    the .pt → .onnx export happen offline in vision_workspace/tools.
+    The core (onnx_detector, postprocess, letterbox, model_registry) has no
+    ROS in it and is unit-tested on its own.
+  </description>
+  <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cobot_interfaces</depend>
+  <depend>yaml-cpp</depend>
+  <depend>libopencv-dev</depend>
+  <!-- onnxruntime: no rosdep key. The official release tarball is unpacked at
+       ONNXRUNTIME_ROOT (default /opt/onnxruntime, done in docker/Dockerfile);
+       CMake imports libonnxruntime.so from there and installs it beside the
+       node with an $ORIGIN rpath, the same way cobot_control ships YMConnect. -->
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,17 @@
+io:
+  outputs:
+    gripper: {io_type: general_output, group: 1, bit: 2}
+  sensors:
+    existance_check: {io_type: general_input, group: 1, bit: 3}
+motion_profiles:
+  default: {interpolation: joint, speed: 25.0, accel_ratio: 25.0, decel_ratio: 25.0, accuracy_mm: 50, tool_number: 0}
+  descend: {interpolation: linear, speed: 100.0, accel_ratio: 25.0, decel_ratio: 25.0, accuracy_mm: 0}
+tools:
+  none:
+    tool_number: 0
+    tip_offset_mm: [0.0, 0.0, -600.0]
+    marker_offset_mm: [0.0, 0.0, 300.0]
+  vacuum_head:
+    tool_number: 1
+    marker_offset_mm: [0.0, 0.0, 0.0]
+active_tool: none

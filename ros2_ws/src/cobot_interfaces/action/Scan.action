@@ -1,0 +1,24 @@
+# One full "look at the scene" cycle, served by localization_node:
+#   1. call /vision/detect with model_id (empty -> default_model_id param) on
+#      the live color frame — or on image_source when that is set
+#   2. match the detections' color stamp to a depth frame
+#   3. pixel + depth -> robot base frame (fitted calibration), rz from corners
+#   4. snake-order the result
+# The ordered targets are returned here AND mirrored on /vision/targets.
+# Rejected when uncalibrated or no depth frames (both only while localize is
+# true), /vision/detect unavailable, or a scan is already running.
+string model_id
+string image_source              # passed through to /vision/detect: container
+                                 # path of an image file; "" = live camera frame.
+                                 # With localize=true the nearest LIVE depth
+                                 # frame is used (best effort, bench tests only).
+bool localize true               # false: stop after detection — no depth and no
+                                 # calibration needed, nothing on /vision/targets;
+                                 # targets stays empty, detection_count is filled
+---
+bool success
+string message
+TargetArray targets              # empty when localize was false
+int32 detection_count            # raw detections /vision/detect returned
+---
+string stage                     # detecting | localizing

@@ -40,13 +40,20 @@ target_include_directories(motoman_robot PUBLIC
 )
 target_link_libraries(motoman_robot PUBLIC YMConnect)
 
-add_library(setup_config STATIC src/setup_config.cpp)
+add_library(setup_config STATIC src/setup_config.cpp src/tooling_state.cpp)
 target_link_libraries(setup_config PUBLIC motoman_robot yaml-cpp)
+
+# Controller profile parsers (TOOL.CND / UFRAME.CND): pure C++, no ROS, no
+# YMConnect, so gtests run them on fixture text.
+add_library(controller_profile STATIC src/controller_profile.cpp)
+target_include_directories(controller_profile PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
 
 # ---------------- node ----------------
 
 add_executable(cobot_control_node src/cobot_control_node.cpp src/main.cpp)
-target_link_libraries(cobot_control_node motoman_robot setup_config)
+target_link_libraries(cobot_control_node motoman_robot setup_config controller_profile)
 ament_target_dependencies(cobot_control_node
   rclcpp rclcpp_action std_msgs std_srvs cobot_interfaces
 )
@@ -65,5 +72,31 @@ install(TARGETS cobot_control_node
 install(FILES ${YMCONNECT_ROOT}/libYMConnect.so
   DESTINATION lib/${PROJECT_NAME}
 )
+# Fixture profile for the zero-hardware path (profile_source: fixture).
+install(DIRECTORY test/data/
+  DESTINATION share/${PROJECT_NAME}/profile_fixtures
+)
+
+# ---------------- tests ----------------
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(test_controller_profile test/test_controller_profile.cpp)
+  target_link_libraries(test_controller_profile controller_profile)
+  target_compile_definitions(test_controller_profile PRIVATE
+    TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/data")
+
+  ament_add_gtest(test_setup_config test/test_setup_config.cpp)
+  target_link_libraries(test_setup_config setup_config)
+  target_compile_definitions(test_setup_config PRIVATE
+    TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/data")
+
+  ament_add_gtest(test_tooling_state test/test_tooling_state.cpp)
+  target_link_libraries(test_tooling_state setup_config)
+
+  ament_add_gtest(test_pose_utils test/test_pose_utils.cpp)
+  target_link_libraries(test_pose_utils motoman_robot)
+endif()
 
 ament_package()

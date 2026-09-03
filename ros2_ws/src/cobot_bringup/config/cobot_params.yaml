@@ -1,171 +1,175 @@
-# All runtime-tunable parameters for the bin-picking stack.
-# Replaces the legacy config.JSON shared Config object (see
-# docs/ros2_architecture.md §6). Values migrated from legacy/config.JSON.
-#
-# Structured data (place trajectories) lives in trajectories.json, referenced
-# by cobot_operation.trajectories_file — launch resolves it to the installed share
-# path unless overridden. The fitted camera→robot transform lives in
-# calibration.yaml next to this file (written by the calibration routine,
-# injected as localization_node.calibration_file by launch).
-
 camera_node:
   ros__parameters:
-    color_endpoint: "tcp://host.docker.internal:5550"
-    depth_endpoint: "tcp://host.docker.internal:5551"
+    color_endpoint: tcp://host.docker.internal:5550
+    depth_endpoint: tcp://host.docker.internal:5551
     publish_rate_hz: 15.0
-    # /camera/save_frames writes timestamped color/depth PNG pairs here
-    # (bind-mounted → appears on the host under vision_workspace/).
-    capture_dir: "/ws/vision_workspace/operation/captures"
-    # Camera intrinsics JSON the streamer writes from its SDK; relayed as a
-    # latched /camera/color/camera_info. Use the COLOR intrinsics and enable
-    # depth->color alignment in the streamer so depth pixels match color.
-    # Schema: {"fx":..,"fy":..,"cx":..,"cy":..,"width":640,"height":480}
-    intrinsics_file: "/ws/vision_workspace/operation/camera_intrinsics.json"
-
-yolo_node:
+    publish_rate_warn_hz: 3.0
+    publish_rate_error_hz: 1.0
+    capture_dir: /ws/vision_workspace/operation/captures
+    intrinsics_file: /ws/vision_workspace/operation/camera_intrinsics.json
+detector_node:
   ros__parameters:
-    model_path: "/ws/vision_workspace/weights/cans_obb_best.pt"
-    confidence: 0.50
-    iou: 0.4
-    max_detections: 20
-    image_size: 640
-    remove_duplicates: true
-    duplicate_center_distance_px: 50.0
-    # Calibration marker model (/vision/locate_dot), lazy-loaded on first use.
-    dot_model_path: "/ws/vision_workspace/weights/red_dot_best.pt"
-    dot_confidence: 0.5
-
+    models_yaml: /ws/runtime_models/models.yaml
+    preload:
+    - cans
+    intra_op_threads: 0
+    # -1 (default) = use each model's own confidence/max_detections from
+    # models.yaml. Set >= 0 to override every model, tunable live with
+    # `ros2 param set /detector_node min_confidence <0..1>` /
+    # `... max_detections <n>` — takes effect on the next /vision/detect goal.
+    min_confidence: -1.0
+    max_detections: -1
 localization_node:
   ros__parameters:
-    # Pick order is a robot-frame snake (no bin corners — those go stale when
-    # the bin shifts). Rows are grouped along this robot axis ("x" or "y");
-    # the arm serpentines along the other axis within each row.
     pathing_row_axis: "y"
     pathing_row_tolerance_mm: 50.0
     can_height_mm: 87.0
     depth_buffer_size: 15
     depth_sample_window_px: 10
     verify_tolerance_mm: 40.0
-    # Depth reading (mm) when the top layer is present. 0.0 = uncalibrated:
-    # get_layer_height returns layer_index=-1 until measured on hardware.
+    verify_max_depth_age_s: 2.0
     depth_at_top_layer_mm: 1900.0
-    # --- camera→robot calibration (math side) ---
-    # Red dot relative to the OFFICIAL toolhead point (the commanded TCP),
-    # [x, y, z] mm along ROBOT BASE axes with the arm at the calibration
-    # orientation. Measure to the dot surface the camera sees. This is the
-    # dot's half of the pair — the tooling's half is tools.<name>.tip_offset_mm
-    # in cobot_setup.yaml;
-    # both hang off the same point, so measure them separately.
-    # MEASURE AND SET BEFORE CALIBRATING.
-    marker_offset_mm: [0.0, 0.0, 300.0]
     dot_samples_per_pose: 3
     calibration_min_samples: 6
-    # Fit worse than this on any axis → calibration rejected, old transform kept.
     calibration_max_rms_mm: 5.0
-    # Which fitter calibration uses. True: TRUST the camera SDK's intrinsics
-    # (/camera/color/camera_info) — small extrinsic-only (Kabsch) fit, refuses
-    # until intrinsics arrive. False: DISTRUST them — full monolithic fit that
-    # solves intrinsics + extrinsics together (needs the wide depth-span grid),
-    # even when a CameraInfo is present. Set False when the SDK's fx/fy are
-    # wrong (this camera reports fx=491.8/fy=655.8, but the data implies
-    # ~610/~614 — a rigid fit with those bad numbers cannot pass).
     require_intrinsics: false
-    # TEMPORARY manual centre select: true = calibration_sample skips the
-    # red-dot model and waits for you to click the marker centre on the web
-    # UI's color feed. Everything downstream is identical. Keep
-    # task_manager.calibration_sample_timeout_sec above the timeout here.
     manual_dot_selection: true
     manual_click_timeout_sec: 120.0
-    # calibration_file is injected by robot.launch.py (bind-mounted config dir).
-
 cobot_control:
   ros__parameters:
-    # C++ hardware node — the only process on the YMConnect link.
-    robot_ip: "192.168.1.31"
-    # Everything read from the controller (state, named sensors/outputs,
-    # pose) is polled at this period and published on /cobot/state. 0.1 =
-    # 10 Hz; raise it if CobotState.poll_ms gets close to the period.
+    robot_ip: 192.168.1.31
     poll_period_s: 0.1
     connect_retry_period_s: 1.0
-    connect_timeout_ms: 500      # YMConnect receive timeout per packet
+    connect_timeout_ms: 500
     connect_retries: 3
-    ymconnect_logging: false     # SDK writes YMConnectLog.txt next to the .so
-    motion_timeout_s: 100.0      # per MoveToPose, moving time only (< task_manager 120)
-    # Pause = MotionStop(false) then MotionStart() to resume. If the firmware
-    # does not hold position that way, switch to the controller HOLD signal.
+    ymconnect_logging: false
+    motion_timeout_s: 100.0
     pause_uses_hold: false
-    check_reachability: true     # IK check before every move
-    pendant_messages: true       # mirror status transitions on the teach pendant
-    # Named sensors / outputs / motion profiles live in cobot_setup.yaml
-    # (setup_file is injected by robot.launch.py).
-
+    check_reachability: true
+    motion_poll_period_s: 0.05
+    motion_start_grace_s: 3.0
+    motion_feedback_hz: 5.0
+    joint_limit_margin_deg: 5.0
+    joint_limits_min_deg:
+    - -210.0
+    - -180.0
+    - -67.0
+    - -210.0
+    - -180.0
+    - -210.0
+    joint_limits_max_deg:
+    - 210.0
+    - 180.0
+    - 210.0
+    - 210.0
+    - 180.0
+    - 210.0
+    pendant_messages: true
+    profile_source: controller
+    profile_fixture_dir: ''
+    profile_tool_file: TOOL.CND
+    profile_uframe_file: UFRAME.CND
+    profile_dump: true
+    poll_joints: true
 cobot_operation:
   ros__parameters:
-    # Pick choreography (Python). Tool profiles live in cobot_setup.yaml
-    # (`tools`, `active_tool`); set active_tool here to override the file.
-    # The tip offset that used to be cobot_node.tool_offset_mm is now
-    # tools.<name>.tip_offset_mm — same meaning, see the comments there.
-    active_tool: ""
     move_timeout_s: 120.0
     service_timeout_s: 5.0
-    # Named-sensor assertion budget (was 5 tries x 0.2 s on the pybind path;
-    # now "wait for a matching /cobot/state sample").
     sensor_assert_timeout_s: 1.0
-    # setup_file and trajectories_file are injected by robot.launch.py.
-
+    sensor_assert_authoritative: false
+    auto_convert_on_tool_change: true
 task_manager:
   ros__parameters:
-    # How long after /vision/scan to wait for the targets message.
+    default_workflow: pick_layer
     scan_timeout_sec: 30.0
-    # --- calibration pose grid (sequencing side; math in localization_node) ---
-    # SET SAFE, REACHABLE BOUNDS: every pose must keep the marker inside the
-    # camera frame and the arm clear of the bin. [0,0] = not configured;
-    # /task/calibrate refuses to run until these are set.
-    calibration_x_range_mm: [-350.0,50.0]
-    calibration_y_range_mm: [-1300.0,-900.0]
-    # At least two heights >=30mm apart or the fit is rejected (Z unconstrained).
-    # Must be floats (trailing .0) — a bare int here is an INTEGER_ARRAY and
-    # the node refuses to start.
-    calibration_z_levels_mm: [500.0, 550.0, 600.0] #add .0 MUST BE FLOATS
-    calibration_grid_size: [3, 2]        # nx, ny poses per z level
-    calibration_orientation_deg: [180.0, 0.0, 0.0]   # rx, ry, rz for every pose
-    calibration_settle_sec: 0.5
-    # Budget for one calibration_sample. Automatic (red-dot) mode needs only
-    # seconds; manual centre select waits on a human, so this must stay above
-    # localization_node.manual_click_timeout_sec.
+    scan_model_id: ''
+    vision_test_image_dir: /ws/vision_workspace/datasets
+    vision_test_model_ids:
+    - cans
+    - green_light
+    - green_light_v2
+    vision_test_seed: 0
+    vision_test_scan_timeout_sec: 90.0
+    calibration_x_range_mm:
+    - -350.0
+    - 250.0
+    calibration_y_range_mm:
+    - -1300.0
+    - -900.0
+    calibration_z_levels_mm:
+    - 450.0
+    - 500.0
+    - 550.0
+    - 600.0
+    calibration_grid_size:
+    - 4
+    - 4
+    calibration_orientation_deg:
+    - 180.0
+    - 0.0
+    - 0.0
+    calibration_settle_sec: 1.0
     calibration_sample_timeout_sec: 180.0
-    # --- auto extrinsic re-calibration at startup ---
-    # With intrinsics known (camera SDK), a small grid corrects for camera
-    # drift each boot. THE ARM MOVES AT LAUNCH — needs the x/y ranges above
-    # set; disable if unattended motion at boot is unsafe for your cell.
-    auto_calibrate_on_startup: true
-    startup_calibration_grid_size: [2, 2]
-    # SEPARATE from calibration_z_levels_mm above — the startup grid has its
-    # own heights (it only needs 2). Keep both inside the same reachable band
-    # or the boot run drives somewhere the UI run never would.
-    startup_calibration_z_levels_mm: [500.0, 600.0]
+    auto_calibrate_on_startup: false
+    startup_calibration_grid_size:
+    - 2
+    - 2
+    startup_calibration_z_levels_mm:
+    - 500.0
+    - 600.0
     startup_calibration_wait_sec: 120.0
-
+    startup_calibration_workflow: startup_calibration
+    calibrate_alias_workflow: calibration
+    auto_calibration_model_id: green_light_v2
+    auto_calibration_class_id: -1
+    auto_calibration_samples_per_pose: 5
+    auto_calibration_grid_size:
+    - 4
+    - 4
+    auto_calibration_z_levels_mm:
+    - 450.0
+    - 500.0
+    - 550.0
+    - 600.0
+    auto_startup_calibration_grid_size:
+    - 3
+    - 3
+    auto_startup_calibration_z_levels_mm:
+    - 500.0
+    - 600.0
 web_node:
   ros__parameters:
     port: 8000
     web_stream_hz: 15.0
-    results_dir: "/ws/vision_workspace/operation/results"
-    # params_file is injected by robot.launch.py so /api/config edits
-    # persist to this file.
-
+    results_dir: /ws/vision_workspace/operation/results
+    cobot_state_hz: 5.0
+    calibration_model_ids:
+    - red_dot
+    - green_light
+    - green_light_v2
+    joint_limits_deg:
+    - -180.0
+    - 180.0
+    - -180.0
+    - 180.0
+    - -180.0
+    - 180.0
+    - -180.0
+    - 180.0
+    - -180.0
+    - 180.0
+    - -180.0
+    - 180.0
 health_monitor:
   ros__parameters:
-    # Nodes that MUST heartbeat; a missing one shows UNKNOWN, a silent one
-    # STALE after stale_factor x its own heartbeat_period_s (default 2 s).
     expected_nodes:
-      - camera_node
-      - yolo_node
-      - localization_node
-      - cobot_control
-      - cobot_operation
-      - task_manager
-      - web_node
-      - health_monitor
+    - camera_node
+    - detector_node
+    - localization_node
+    - cobot_control
+    - cobot_operation
+    - task_manager
+    - web_node
+    - health_monitor
     stale_factor: 3.0
     summary_period_s: 1.0

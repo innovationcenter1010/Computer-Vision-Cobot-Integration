@@ -4,19 +4,19 @@
   <name>cobot_vision</name>
   <version>0.1.0</version>
   <description>
-    Vision pipeline, split into two nodes:
-      yolo_node          — pure perception: YOLO-OBB on the latest color frame,
-                           publishes pixel-space detections; locates the red
-                           calibration dot on request. Only importer of
-                           ultralytics (pip dependency, no rosdep key).
-      localization_node  — pure geometry: fitted camera→robot calibration
-                           (px + depth → base-frame xyz, calibration.py), rz
-                           from corners, snake pick ordering. Owns the
-                           calibration math services (begin/sample/compute;
-                           task_manager drives the robot between them) and the
-                           cheap tier-1 depth checks (VerifyTarget,
-                           GetLayerHeight). Refuses to localize uncalibrated.
-    Training/export tools live in vision_workspace/tools/ (dev-PC .venv), not here.
+    Geometry half of the vision pipeline (the ML half is cobot_detector, C++):
+      localization_node  — owns the /vision/scan action: calls /vision/detect
+                           (cobot_detector), then fitted camera→robot
+                           calibration (px + depth → base-frame xyz,
+                           calibration.py), rz from corners, snake ordering →
+                           TargetArray. Owns the calibration math services
+                           (begin/sample/compute; task_manager drives the robot
+                           between them, the dot is found through /vision/detect
+                           with the calibration model) and the cheap tier-1
+                           depth checks (VerifyTarget, GetLayerHeight).
+                           Refuses to localize uncalibrated.
+    No ML dependencies. Training/export tools live in vision_workspace/tools/
+    (dev-PC .venv), not here.
   </description>
   <maintainer email="innovationcenter1010@gmail.com">james-t-smith</maintainer>
   <license>MIT</license>

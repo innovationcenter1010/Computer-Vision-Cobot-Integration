@@ -57,7 +57,8 @@ class CameraRobotCalibration:
 
     def __init__(self, matrix: np.ndarray, rms_mm: tuple[float, float, float],
                  sample_count: int, created: str = "", source: str = "full",
-                 intrinsics: dict | None = None):
+                 intrinsics: dict | None = None, tool_number: int | None = None,
+                 tool_name: str = "", marker_offset_mm: tuple | None = None):
         matrix = np.asarray(matrix, dtype=np.float64)
         if matrix.shape != (3, 4):
             raise CalibrationError(f"matrix must be 3x4, got {matrix.shape}")
@@ -70,6 +71,16 @@ class CameraRobotCalibration:
         # The intrinsics used/absorbed, if known: {fx, fy, cx, cy}. Persisted
         # so the next startup can run an extrinsic-only fit without them again.
         self.intrinsics = dict(intrinsics) if intrinsics else None
+        # Which YRC1000 tool file the commanded TCPs were expressed in while
+        # sampling, and the marker offset that was added (audit). The fit
+        # itself is base-frame and tool-independent; a mismatch with the
+        # active tool is a dashboard WARNING, not an error. None = unknown
+        # (files written before tooling support).
+        self.tool_number = None if tool_number is None else int(tool_number)
+        self.tool_name = str(tool_name or "")
+        self.marker_offset_mm = (
+            tuple(float(v) for v in marker_offset_mm) if marker_offset_mm is not None else None
+        )
 
     # ------------------------------------------------------------------
     # Fitting
@@ -248,6 +259,11 @@ class CameraRobotCalibration:
             "source": self.source,
             "created": self.created,
         }
+        if self.tool_number is not None:
+            calibration["tool_number"] = int(self.tool_number)
+            calibration["tool_name"] = self.tool_name
+        if self.marker_offset_mm is not None:
+            calibration["marker_offset_mm"] = list(self.marker_offset_mm)
         payload = {"camera_robot_calibration": calibration}
         # Static intrinsics block — kept beside the transform so the next
         # startup's extrinsic fit can reuse them if the camera is silent.
@@ -277,6 +293,9 @@ class CameraRobotCalibration:
                 created=data.get("created", ""),
                 source=data.get("source", "full"),
                 intrinsics=intrinsics,
+                tool_number=data.get("tool_number"),
+                tool_name=data.get("tool_name", ""),
+                marker_offset_mm=data.get("marker_offset_mm"),
             )
         except (KeyError, TypeError) as e:
             raise CalibrationError(f"unreadable calibration file {path}: {e}") from e

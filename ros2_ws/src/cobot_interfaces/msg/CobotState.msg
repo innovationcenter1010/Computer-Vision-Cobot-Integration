@@ -26,13 +26,22 @@ bool[] sensor_values
 string[] output_names
 bool[] output_values
 
-# Current TCP pose, robot base frame, mm / degrees (active tool file).
+# Current TCP pose, robot base frame, mm / degrees, expressed in
+# pose_tool_number (== active_tool_number except for the one tick in which
+# the active tool changed).
 float64 x
 float64 y
 float64 z
 float64 rx
 float64 ry
 float64 rz
+int32 pose_tool_number
+float64[] joints_deg      # S L U R B T, degrees; empty when the read failed or poll_joints=false
+
+# Active tool (see /cobot/set_active_tool, ControllerProfile on /cobot/profile)
+int32 active_tool_number
+string active_tool_name   # "none" = tool file 0
+bool profile_loaded       # /cobot/profile has controller data (not just an empty shell)
 
 Alarm[] alarms            # only filled while alarming
 float32 poll_ms           # wall time the last poll tick spent talking to the controller

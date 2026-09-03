@@ -1,0 +1,53 @@
+# Model registry for cobot_detector (bind-mounted at /ws/runtime_models/ —
+# edits need no rebuild, restart detector_node to pick them up).
+#
+# The leaf key (cans, red_dot, ...) is the `model_id` a Detect / Scan goal
+# names. Ids must be unique across both sections. `path` is relative to this
+# file (or absolute). Input size is read from the .onnx itself (fixed by
+# vision_workspace/tools/export_to_onnx.py), so it is not declared here.
+#
+# type: obb   → rotated boxes; corners TL,TR,BR,BL + angle (radians)
+#       bbox  → axis-aligned boxes; same message, angle = 0
+
+runtime:                      # models the application runs every cycle
+  cans:
+    # YOLO26 end-to-end export: NMS is inside the graph ([1,300,7] head,
+    # auto-detected; iou is unused for this layout).
+    path: cans_obb_best/cans_obb_best.onnx
+    type: obb
+    confidence: 0.02
+    iou: 0.40
+    max_detections: 20
+    remove_duplicates: true            # second pass: centre-distance filter
+    duplicate_center_distance_px: 50.0
+
+  green_light:
+    # YOLOE prompt model, seg head ([1,4+nc+32,6300], nc = manifest classes); boxes only, masks
+    # ignored. Class count comes from manifest.yaml. Defaults from the export.
+    path: yoloe_cobot_v1/yoloe_cobot_v1.onnx
+    type: bbox
+    confidence: 0.35
+    iou: 0.50
+    max_detections: 10
+
+  green_light_v2:
+    # YOLOE-11s linear probe (tools/train_green_light.py --linear-probe):
+    # text-initialised class conv re-fitted on datasets/green_light, exported
+    # as a plain single-class detect head ([1,5,6300], raw layout).
+    path: green_light_v2/green_light_v2.onnx
+    type: bbox
+    confidence: 0.35
+    iou: 0.50
+    max_detections: 10
+
+calibration:                  # models only the calibration routine needs
+  # NOT EXPORTED YET: run `python tools/export_to_onnx.py red_dot_best`
+  # (dev-PC .venv) to create red_dot_best/red_dot_best.onnx here. Until then
+  # the first calibration detect fails with "file not found" (or use
+  # manual_dot_selection).
+  red_dot:
+    path: red_dot_best/red_dot_best.onnx
+    type: bbox
+    confidence: 0.50
+    iou: 0.40
+    max_detections: 5

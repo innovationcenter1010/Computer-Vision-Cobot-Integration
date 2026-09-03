@@ -1,0 +1,10 @@
+# cobot_operation: convert EVERY stored teach point (runtime_config/
+# trajectories.json) to `to_tool` via /cobot/convert_pose (controller
+# kinematics, no motion) and persist. All-or-nothing: on any failure the
+# file is left untouched.
+int32 to_tool -1       # -1 = the controller's current active tool
+---
+bool success
+string message
+int32 to_tool          # resolved tool number
+int32 converted        # poses rewritten (0 when already in that frame)

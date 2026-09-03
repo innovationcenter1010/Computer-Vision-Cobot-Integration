@@ -4,10 +4,12 @@
   <name>cobot_tasks</name>
   <version>0.1.0</version>
   <description>
-    Task manager — owns WHAT the system is doing. Runs the state machine
-    (idle / scanning / picking / calibrating), sequences work by sending
-    action goals to cobot_node and service calls to the vision nodes, and
-    publishes the single source of operational truth on /task/status.
+    Task manager — owns WHAT the system is doing. Hosts a registry of
+    modular workflows (cobot_tasks/workflows/: pick_layer, calibration, ...),
+    runs one at a time by sending action goals to cobot_operation /
+    cobot_control and service calls to the vision nodes, lists them on
+    /task/workflows for the dashboard, and publishes the single source of
+    operational truth on /task/status.
     Dependency rule: rclpy + cobot_interfaces ONLY — this node never computes
     geometry and never touches motoman/camera code.
   </description>

@@ -7,5 +7,6 @@ float64 z
 float64 rx
 float64 ry
 float64 rz
+int32 tool_number         # tool file the P-variable was stored with
 int32 status_code
 string message

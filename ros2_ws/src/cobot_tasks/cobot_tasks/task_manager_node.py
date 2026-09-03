@@ -1,40 +1,45 @@
 """task_manager_node — owns WHAT the system is doing.
 
-The decision/sequencing layer between the web UI and the executors. It runs
-the state machine (idle / scanning / picking / calibrating), sends one action
-goal or service call at a time, and publishes the single source of
-operational truth. cobot_node executes motion; the vision nodes do the math;
-this node only decides, gates and reports.
+The decision/sequencing layer between the web UI and the executors. It hosts
+a registry of WORKFLOWS (cobot_tasks/workflows/), runs one at a time on a
+worker thread, and publishes the single source of operational truth.
+cobot_operation / cobot_control execute motion; the vision nodes do the
+math; this node only decides, gates and reports.
 
-  in:  /task/start | /task/stop | /task/calibrate   (std_srvs/Trigger)
-       /vision/targets (CanTargetArray) — DATA, not a trigger: consumed only
-                                          while a scan this node requested is
-                                          in flight; ignored otherwise
-       /cobot/status (CobotStatus)      — hardware/connection state, mirrored
-                                          into /task/status when no task runs
-  out: /task/status (TaskStatus, latched) — THE operational state
-       /task/layer_report (LayerReport)
-       /task/pick_event (PickEvent)      — one per can: outcome + post-pick
-                                          depth verification ("second depth
-                                          scan" via /vision/verify_target)
-  calls:
-       /cobot/pick_can      (PickCan action)     one can per goal
-       /cobot/move_to_pose  (MoveToPose action)  calibration grid moves
-       /vision/scan, /vision/calibration_begin|sample|compute  (services)
+  in:  /task/start_workflow (StartWorkflow)  run one workflow by id
+       /task/start | /task/calibrate (Trigger)  aliases: default_workflow /
+                                                "calibration"
+       /task/stop (Trigger)                    cancels the active goal natively
+       /cobot/status (CobotStatus)  — hardware/connection state, mirrored into
+                                      /task/status when no workflow runs
+       /cobot/state (CobotState, 10 Hz) + /health/summary (HealthSummary)
+                                    — raw inputs for the DERIVED capability
+                                      (system_state.py): none/see/move/operate.
+                                      Read-only aggregation — never set here.
+  out: /task/status (TaskStatus, latched) — THE operational state;
+                                            active_task = workflow id
+       /task/system_state (SystemState, latched) — individual robot/vision
+                                      facts + the capability bitmask
+       /task/workflows (WorkflowList, latched) — registry + readiness (each
+                                      workflow's `requires` capability gates
+                                      it), for the dashboard's selector
+       /task/layer_report (LayerReport), /task/pick_event (PickEvent)
+  calls: whatever the registered workflows declare (ClientSpec) — one
+       action/service client per key, created here, shared by all workflows.
+
+Adding a task: write workflows/<name>.py, add it to workflows/__init__.py
+REGISTRY. Nothing in this file changes.
 
 Dependency rule (docs/ros2_architecture.md §11): rclpy + cobot_interfaces
-ONLY (plus cobot_health, which is itself rclpy + cobot_interfaces only and
-carries no geometry/robot/camera code). If this node ever computes geometry
-or imports anything robot- or camera-facing, it has become a god-node —
-reject the change.
+ONLY (plus cobot_health). Workflows must not even import rclpy — they talk
+to ROS through WorkflowContext (context.py) so they stay unit-testable.
 
-Threading model: tasks run in one background worker thread, one at a time
-(_operation_lock, held for the whole task). Trigger services live in their
-own callback group so /task/stop is reachable WHILE a task runs (requires the
-MultiThreadedExecutor in main()). Action/service futures are resolved by
-executor threads and bridged to the worker with events; while a goal is in
-flight the worker polls _stop_requested and cancels the goal natively, so
-stop interrupts a pick mid-choreography instead of waiting for the next can.
+Threading model: one workflow at a time (_operation_lock, held for the whole
+run). Trigger services live in their own callback group so /task/stop is
+reachable WHILE a workflow runs (requires the MultiThreadedExecutor in
+main()). Futures are resolved by executor threads and bridged to the worker
+inside WorkflowContext; while a goal is in flight the worker polls
+_stop_requested and cancels the goal natively.
 """
 
 import threading
@@ -49,30 +54,30 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 
 from std_srvs.srv import Trigger
 
-from cobot_interfaces.action import MoveToPose, PickCan
 from cobot_interfaces.msg import (
-    CanTargetArray,
+    CobotState,
     CobotStatus,
+    HealthSummary,
     Heartbeat,
     LayerReport,
+    NodeHealth,
     PickEvent,
+    SystemState,
     TaskStatus,
+    WorkflowInfo,
+    WorkflowList,
 )
-from cobot_interfaces.srv import CalibrationSample, VerifyTarget
+from cobot_interfaces.srv import StartWorkflow
 
-from cobot_health.heartbeat import HeartbeatPublisher
+from cobot_health.heartbeat import SUMMARY_TOPIC, HeartbeatPublisher
 
+from cobot_tasks.context import WorkflowContext
+from cobot_tasks.system_state import CAPABILITY_NAMES, RobotSample, VisionFacts, derive
+from cobot_tasks.workflows import REGISTRY, WORKFLOWS
 
 LATCHED_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
-GOAL_ACK_TIMEOUT_SEC = 10.0     # server accepting/rejecting the goal
-PICK_TIMEOUT_SEC = 300.0        # one full pick+place choreography
-MOVE_TIMEOUT_SEC = 120.0        # one calibration grid move
-# calibration_begin lazy-loads the red-dot model on the vision side.
-CAL_BEGIN_TIMEOUT_SEC = 120.0
-CAL_COMPUTE_TIMEOUT_SEC = 60.0
-# Post-pick depth verification ("second depth scan"): cheap, no ML.
-VERIFY_TIMEOUT_SEC = 5.0
+SYSTEM_REFRESH_SEC = 1.0        # capability + workflow-readiness re-derivation period
 
 TASK_STATE_NAMES = {
     TaskStatus.STATE_DISCONNECTED: "disconnected",
@@ -89,40 +94,60 @@ COBOT_STATE_NAMES = {
     CobotStatus.STATE_BUSY: "busy",
     CobotStatus.STATE_ERROR: "error",
 }
+HEALTH_LEVEL_NAMES = {
+    NodeHealth.LEVEL_OK: "ok",
+    NodeHealth.LEVEL_WARN: "warn",
+    NodeHealth.LEVEL_ERROR: "error",
+    NodeHealth.LEVEL_STALE: "stale",
+    NodeHealth.LEVEL_UNKNOWN: "unknown",
+}
+RUNNING_STATES = (
+    TaskStatus.STATE_SCANNING,
+    TaskStatus.STATE_PICKING,
+    TaskStatus.STATE_CALIBRATING,
+    TaskStatus.STATE_STOPPING,
+)
 
 
 class TaskManagerNode(Node):
     def __init__(self):
         super().__init__("task_manager")
 
-        # How long after /vision/scan to wait for the targets message.
-        self.declare_parameter("scan_timeout_sec", 30.0)
-
-        # Calibration pose grid — SET SAFE, REACHABLE BOUNDS BEFORE RUNNING.
-        # Every pose must keep the marker inside the camera frame and the arm
-        # clear of the bin. [0,0] ranges mean "not configured": calibrate refuses.
-        self.declare_parameter("calibration_x_range_mm", [0.0, 0.0])
-        self.declare_parameter("calibration_y_range_mm", [0.0, 0.0])
-        self.declare_parameter("calibration_z_levels_mm", [0.0])
-        self.declare_parameter("calibration_grid_size", [3, 2])  # nx, ny per level
-        self.declare_parameter("calibration_orientation_deg", [180.0, 0.0, 0.0])
-        self.declare_parameter("calibration_settle_sec", 0.5)
-        # How long one calibration_sample may take. Automatic (red-dot) mode
-        # needs seconds; the temporary manual centre-select mode waits on a
-        # human, so this must exceed localization's manual_click_timeout_sec.
-        self.declare_parameter("calibration_sample_timeout_sec", 30.0)
-
-        # Auto extrinsic re-calibration at startup: with intrinsics known (from
-        # the camera SDK), a small grid corrects for camera drift each boot.
-        # The arm MOVES automatically at launch — set the grid bounds above and
-        # keep this off if that is unsafe for your cell.
-        self.declare_parameter("auto_calibrate_on_startup", True)
-        self.declare_parameter("startup_calibration_grid_size", [2, 2])
-        self.declare_parameter("startup_calibration_z_levels_mm", [-200.0, 200.0])
+        # ---- node-level params --------------------------------------
+        self.declare_parameter("default_workflow", "pick_layer")
+        # OFF by default: calibration is operator-selected from the
+        # dashboard, nothing runs at boot. Opting in re-enables the old
+        # behavior (the startup_calibration workflow launches once the robot
+        # and vision services are up) — THE ARM MOVES AT LAUNCH.
+        self.declare_parameter("auto_calibrate_on_startup", False)
         # How long to wait for the robot + services before giving up the boot run.
         self.declare_parameter("startup_calibration_wait_sec", 120.0)
+        # Which registered calibration workflow runs at boot / behind the
+        # /task/calibrate alias: the manual ones or their automatic twins.
+        self.declare_parameter("startup_calibration_workflow", "startup_calibration")
+        self.declare_parameter("calibrate_alias_workflow", "calibration")
 
+        # ---- workflow params: each name declared once ---------------
+        declared: set[str] = set()
+        for wf in REGISTRY:
+            for spec in wf.params:
+                if spec.name not in declared:
+                    self.declare_parameter(spec.name, spec.default)
+                    declared.add(spec.name)
+
+        default = str(self.get_parameter("default_workflow").value)
+        if default not in WORKFLOWS:
+            fallback = REGISTRY[0].id
+            self.get_logger().error(
+                f"default_workflow '{default}' unknown (known: {sorted(WORKFLOWS)}) — using '{fallback}'"
+            )
+            default = fallback
+        self._default_workflow = default
+
+        # ---- publishers ---------------------------------------------
         self._status_pub = self.create_publisher(TaskStatus, "/task/status", LATCHED_QOS)
+        self._system_pub = self.create_publisher(SystemState, "/task/system_state", LATCHED_QOS)
+        self._workflows_pub = self.create_publisher(WorkflowList, "/task/workflows", LATCHED_QOS)
         self._report_pub = self.create_publisher(LayerReport, "/task/layer_report", 10)
         self._pick_event_pub = self.create_publisher(PickEvent, "/task/pick_event", 10)
 
@@ -131,54 +156,72 @@ class TaskManagerNode(Node):
             TaskStatus.STATE_DISCONNECTED, "", "", 0, 0
         )
 
-        self._operation_lock = threading.Lock()  # one task at a time
+        self._operation_lock = threading.Lock()  # one workflow at a time
         self._operation_thread: threading.Thread | None = None
         self._stop_requested = threading.Event()
 
-        # Hardware state mirrored from cobot_node (latched). None = never heard.
+        # Hardware state mirrored from cobot_control (latched). None = never heard.
         self._robot_state: int | None = None
 
-        # Targets handoff: _on_targets fills the slot only while a scan this
-        # node requested is in flight (data, not a trigger).
-        self._targets_lock = threading.Lock()
-        self._awaiting_targets = False
-        self._targets_slot: list | None = None
-        self._targets_event = threading.Event()
+        # Raw inputs for the derived capability (system_state.derive): newest
+        # /cobot/state and /health/summary, each with a monotonic receive
+        # stamp. Single-tuple assignment — atomic under the GIL, no lock.
+        self._cobot_state: tuple | None = None
+        self._health: tuple | None = None
+        # Derived read-only snapshot; capability NONE (with "no fresh ..."
+        # blockers) until both inputs arrive, so every workflow reads
+        # not-ready before the graph is up.
+        self._system_snapshot = derive(None, VisionFacts.empty())
 
-        # Services in their own group: stop must interleave with a running task.
+        # ---- shared client pool from the registry's ClientSpecs ------
+        self._client_specs = {}
+        self._wf_clients = {}
+        for wf in REGISTRY:
+            for spec in wf.clients:
+                if spec.key in self._wf_clients:
+                    continue  # validate_registry() guarantees identical specs
+                self._client_specs[spec.key] = spec
+                if spec.kind == "action":
+                    self._wf_clients[spec.key] = ActionClient(self, spec.type, spec.name)
+                else:
+                    self._wf_clients[spec.key] = self.create_client(spec.type, spec.name)
+
+        # ---- services: own group so stop interleaves with a running task
         service_group = MutuallyExclusiveCallbackGroup()
+        self.create_service(
+            StartWorkflow, "/task/start_workflow", self._on_start_workflow,
+            callback_group=service_group,
+        )
         self.create_service(Trigger, "/task/start", self._on_start, callback_group=service_group)
         self.create_service(Trigger, "/task/stop", self._on_stop, callback_group=service_group)
         self.create_service(
             Trigger, "/task/calibrate", self._on_calibrate, callback_group=service_group
         )
 
-        self.create_subscription(CanTargetArray, "/vision/targets", self._on_targets, 10)
         self.create_subscription(
             CobotStatus, "/cobot/status", self._on_cobot_status, LATCHED_QOS
         )
-
-        self._pick_client = ActionClient(self, PickCan, "/cobot/pick_can")
-        self._move_client = ActionClient(self, MoveToPose, "/cobot/move_to_pose")
-
-        self._scan_client = self.create_client(Trigger, "/vision/scan")
-        self._cal_begin_client = self.create_client(Trigger, "/vision/calibration_begin")
-        self._cal_sample_client = self.create_client(
-            CalibrationSample, "/vision/calibration_sample"
-        )
-        self._cal_compute_client = self.create_client(Trigger, "/vision/calibration_compute")
-        self._verify_client = self.create_client(VerifyTarget, "/vision/verify_target")
+        self.create_subscription(CobotState, "/cobot/state", self._on_cobot_state, 1)
+        self.create_subscription(HealthSummary, SUMMARY_TOPIC, self._on_health, LATCHED_QOS)
 
         self._publish_status(
-            TaskStatus.STATE_DISCONNECTED, "waiting for /cobot/status from cobot_node"
+            TaskStatus.STATE_DISCONNECTED, "waiting for /cobot/status from cobot_control"
         )
 
-        # Kick off the auto startup calibration in the background — it waits
-        # for the robot and services, then runs the small extrinsic grid once.
+        # Latched snapshot + workflow list: publish now, then one 1 s timer
+        # re-derives both, republishing each only when its content changes.
+        self._publish_system_state()
+        self._last_ready: tuple | None = None
+        self._publish_workflows(force=True)
+        self.create_timer(SYSTEM_REFRESH_SEC, self._refresh_system_state)
+
         if self.get_parameter("auto_calibrate_on_startup").value:
             threading.Thread(target=self._run_startup_calibration, daemon=True).start()
 
         self._hb = HeartbeatPublisher(self, self._health_report)
+        self.get_logger().info(
+            f"workflows: {[w.id for w in REGISTRY]} (default '{self._default_workflow}')"
+        )
 
     # ------------------------------------------------------------------
     # Status helpers
@@ -202,6 +245,140 @@ class TaskManagerNode(Node):
         self._last_status = (state, detail, active_task, int(current), int(total))
         self._status_pub.publish(msg)
 
+    def _readiness(self) -> list[tuple[str, bool, str]]:
+        out = []
+        for wf in REGISTRY:
+            ok, why = wf.check_ready(WorkflowContext(self, wf))
+            out.append((wf.id, ok, why))
+        return out
+
+    def _publish_workflows(self, force: bool = False):
+        readiness = self._readiness()
+        # `why` is part of the key: with capability blockers in the reason
+        # text, the reason changes while ok stays false — the dashboard must
+        # see the new text (bounded by the 1 s refresh timer).
+        key = tuple(readiness)
+        if not force and key == self._last_ready:
+            return
+        self._last_ready = key
+
+        msg = WorkflowList()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.default_workflow = self._default_workflow
+        for wf, (_, ok, why) in zip(REGISTRY, readiness):
+            info = WorkflowInfo()
+            info.id = wf.id
+            info.label = wf.label
+            info.description = wf.description
+            info.ready = bool(ok)
+            info.not_ready_reason = "" if ok else why
+            info.requires = int(wf.requires)
+            info.requires_name = CAPABILITY_NAMES.get(wf.requires, "?")
+            msg.workflows.append(info)
+        self._workflows_pub.publish(msg)
+
+    # ------------------------------------------------------------------
+    # Derived capability — read-only aggregation of other nodes' state
+    # ------------------------------------------------------------------
+
+    def _on_cobot_state(self, msg: CobotState):
+        self._cobot_state = (msg, time.monotonic())
+
+    def _on_health(self, msg: HealthSummary):
+        self._health = (msg, time.monotonic())
+
+    def _robot_sample(self) -> RobotSample | None:
+        held = self._cobot_state
+        if held is None:
+            return None
+        msg, received = held
+        return RobotSample(
+            connected=bool(msg.connected),
+            servo_on=bool(msg.servo_on),
+            alarming=bool(msg.alarming),
+            erroring=bool(msg.erroring),
+            in_hold=bool(msg.in_hold),
+            control_mode=int(msg.control_mode),
+            paused=bool(msg.paused),
+            busy=bool(msg.busy),
+            age_s=time.monotonic() - received,
+            active_tool_number=int(msg.active_tool_number),
+            active_tool_name=str(msg.active_tool_name),
+        )
+
+    def _vision_facts(self) -> VisionFacts:
+        held = self._health
+        if held is None:
+            return VisionFacts.empty()
+        msg, received = held
+        rows = {n.node_name: n for n in msg.nodes}
+
+        def level(name: str) -> str | None:
+            row = rows.get(name)
+            return None if row is None else HEALTH_LEVEL_NAMES.get(row.level, "unknown")
+
+        loc = rows.get("localization_node")
+        metrics = {kv.key: kv.value for kv in loc.metrics} if loc is not None else {}
+        calibrated = None
+        if "calibrated" in metrics:
+            calibrated = metrics["calibrated"] == "true"
+        try:
+            depth_age = float(metrics["depth_buffer_age_s"])
+        except (KeyError, ValueError):
+            depth_age = None
+        try:
+            cal_tool = int(float(metrics["calibration_tool_number"]))
+        except (KeyError, ValueError, TypeError):
+            cal_tool = None
+        return VisionFacts(
+            camera_level=level("camera_node"),
+            localization_level=level("localization_node"),
+            detector_level=level("detector_node"),
+            calibrated=calibrated,
+            depth_age_s=depth_age,
+            age_s=time.monotonic() - received,
+            calibration_tool_number=cal_tool,
+        )
+
+    def _refresh_system_state(self):
+        snapshot = derive(self._robot_sample(), self._vision_facts())
+        if snapshot.content() != self._system_snapshot.content():
+            self._system_snapshot = snapshot
+            self._publish_system_state()
+        else:
+            self._system_snapshot = snapshot  # keep ages current for check_ready
+        self._publish_workflows()
+
+    def _publish_system_state(self):
+        snap = self._system_snapshot
+        msg = SystemState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.capability = int(snap.capability)
+        msg.capability_name = snap.capability_name
+        msg.robot_state_fresh = snap.robot_state_fresh
+        msg.connected = snap.connected
+        msg.servo_on = snap.servo_on
+        msg.alarming = snap.alarming
+        msg.erroring = snap.erroring
+        msg.in_hold = snap.in_hold
+        msg.paused = snap.paused
+        msg.busy = snap.busy
+        msg.control_mode = snap.control_mode
+        msg.robot_state_age_s = float(snap.robot_state_age_s)
+        msg.health_fresh = snap.health_fresh
+        msg.camera_ok = snap.camera_ok
+        msg.calibrated = snap.calibrated
+        msg.depth_fresh = snap.depth_fresh
+        msg.detector_ok = snap.detector_ok
+        msg.health_age_s = float(snap.health_age_s)
+        msg.move_blockers = list(snap.move_blockers)
+        msg.see_blockers = list(snap.see_blockers)
+        msg.active_tool_number = int(snap.active_tool_number)
+        msg.active_tool_name = snap.active_tool_name
+        msg.calibration_tool_number = int(snap.calibration_tool_number)
+        msg.calibration_tool_mismatch = bool(snap.calibration_tool_mismatch)
+        self._system_pub.publish(msg)
+
     def _health_report(self):
         state, detail, active_task, current, total = self._last_status
         robot = self._robot_state
@@ -218,21 +395,26 @@ class TaskManagerNode(Node):
                 summary += f" {current}/{total}"
         elif detail:
             summary += f" · {detail}"
-        return level, summary, {
+        metrics = {
             "state": state_name,
             "active_task": active_task or None,
             "progress": f"{current}/{total}" if total else None,
             "robot_state": None if robot is None else COBOT_STATE_NAMES.get(robot, "unknown"),
             "operation_running": self._operation_lock.locked(),
             "stop_requested": self._stop_requested.is_set(),
-            "scan_ready": self._scan_client.service_is_ready(),
-            "verify_ready": self._verify_client.service_is_ready(),
-            "pick_ready": self._pick_client.server_is_ready(),
+            "capability": self._system_snapshot.capability_name,
+            "move_blockers": len(self._system_snapshot.move_blockers) or None,
+            "see_blockers": len(self._system_snapshot.see_blockers) or None,
         }
+        for key, spec in self._client_specs.items():
+            client = self._wf_clients[key]
+            ready = client.server_is_ready() if spec.kind == "action" else client.service_is_ready()
+            metrics[f"{key}_ready"] = ready
+        return level, summary, metrics
 
     def _robot_available(self) -> tuple[bool, str]:
         if self._robot_state is None:
-            return False, "no /cobot/status yet — is cobot_node running?"
+            return False, "no /cobot/status yet — is cobot_control running?"
         if self._robot_state == CobotStatus.STATE_DISCONNECTED:
             return False, "robot not connected"
         if self._robot_state == CobotStatus.STATE_ERROR:
@@ -243,7 +425,7 @@ class TaskManagerNode(Node):
         previous = self._robot_state
         self._robot_state = msg.state
         # Mirror connection changes into /task/status, but never fight a
-        # running task for the topic.
+        # running workflow for the topic.
         if msg.state == previous or self._operation_lock.locked():
             return
         if msg.state == CobotStatus.STATE_DISCONNECTED:
@@ -252,86 +434,61 @@ class TaskManagerNode(Node):
             self._publish_status(TaskStatus.STATE_IDLE, "robot connected")
 
     # ------------------------------------------------------------------
-    # Blocking call helpers (worker thread; executor threads resolve futures)
+    # The one launch path: gate → lock → worker thread
     # ------------------------------------------------------------------
 
-    def _call(self, client, request, timeout: float):
-        future = client.call_async(request)
-        done = threading.Event()
-        future.add_done_callback(lambda _: done.set())
-        if not done.wait(timeout=timeout):
-            future.cancel()
-            raise TimeoutError(f"{client.srv_name} timed out after {timeout:.0f}s")
-        return future.result()
+    def _launch(self, workflow_id: str, source: str) -> tuple[bool, str]:
+        wf = WORKFLOWS.get(workflow_id)
+        if wf is None:
+            return False, f"unknown workflow '{workflow_id}'; known: {[w.id for w in REGISTRY]}"
 
-    def _run_action(self, client, action_type, name: str, goal, timeout: float):
-        """Send one goal and block for its result. While waiting, a stop
-        request cancels the goal natively (the server stops at its next safe
-        phase boundary). Returns the action result (success/message) or a
-        synthesized failure if the goal was rejected."""
-        goal_future = client.send_goal_async(goal)
-        acked = threading.Event()
-        goal_future.add_done_callback(lambda _: acked.set())
-        if not acked.wait(timeout=GOAL_ACK_TIMEOUT_SEC):
-            raise TimeoutError(f"{name} goal was never acknowledged")
-
-        goal_handle = goal_future.result()
-        if not goal_handle.accepted:
-            result = action_type.Result()
-            result.success = False
-            result.message = "goal rejected by cobot_node (busy or disconnected)"
-            return result
-
-        result_future = goal_handle.get_result_async()
-        done = threading.Event()
-        result_future.add_done_callback(lambda _: done.set())
-
-        cancel_sent = False
-        deadline = time.monotonic() + timeout
-        while not done.wait(timeout=0.2):
-            if self._stop_requested.is_set() and not cancel_sent:
-                self.get_logger().info(f"stop → canceling {name} goal")
-                goal_handle.cancel_goal_async()
-                cancel_sent = True
-            if time.monotonic() > deadline:
-                if not cancel_sent:
-                    goal_handle.cancel_goal_async()
-                raise TimeoutError(f"{name} timed out after {timeout:.0f}s")
-
-        return result_future.result().result
-
-    # ------------------------------------------------------------------
-    # Trigger services — gate, then hand off to the worker thread
-    # ------------------------------------------------------------------
-
-    def _on_start(self, request, response):
-        ok, why = self._robot_available()
+        ctx = WorkflowContext(self, wf)
+        ok, why = wf.check_ready(ctx)
         if not ok:
-            response.success = False
-            response.message = why
-            return response
-
-        if not self._scan_client.service_is_ready():
-            response.success = False
-            response.message = "/vision/scan not available"
-            return response
-
-        if not self._pick_client.server_is_ready():
-            response.success = False
-            response.message = "/cobot/pick_can action server not available"
-            return response
+            return False, why
 
         if not self._operation_lock.acquire(blocking=False):
-            response.success = False
-            response.message = "a task is already running"
-            return response
+            return False, "a task is already running"
 
         self._stop_requested.clear()
-        self._operation_thread = threading.Thread(target=self._run_pick_cycle, daemon=True)
+        self.get_logger().info(f"starting workflow '{wf.id}' ({source})")
+        self._operation_thread = threading.Thread(
+            target=self._run_workflow, args=(wf, ctx), daemon=True
+        )
         self._operation_thread.start()
+        return True, f"{wf.label} started — progress on /task/status"
 
-        response.success = True
-        response.message = "pick cycle started — progress on /task/status"
+    def _run_workflow(self, wf, ctx):
+        """Owns self._operation_lock (acquired by _launch); releases on exit."""
+        try:
+            wf.run(ctx)
+            if self._last_status[0] in RUNNING_STATES:
+                # Workflow returned without a terminal status — never leave
+                # the UI showing a task that is no longer running.
+                self._publish_status(TaskStatus.STATE_IDLE, f"{wf.id} finished")
+        except Exception as e:  # noqa: BLE001 — a failed workflow must not kill the node
+            self.get_logger().error(f"workflow '{wf.id}' crashed: {e!r}")
+            self._publish_status(TaskStatus.STATE_ERROR, f"{wf.id} crashed: {e}")
+        finally:
+            self._operation_lock.release()
+            self._publish_workflows(force=True)
+
+    # ------------------------------------------------------------------
+    # Services
+    # ------------------------------------------------------------------
+
+    def _on_start_workflow(self, request, response):
+        workflow_id = request.workflow or self._default_workflow
+        response.success, response.message = self._launch(workflow_id, "web")
+        return response
+
+    def _on_start(self, request, response):
+        response.success, response.message = self._launch(self._default_workflow, "start alias")
+        return response
+
+    def _on_calibrate(self, request, response):
+        wf_id = str(self.get_parameter("calibrate_alias_workflow").value) or "calibration"
+        response.success, response.message = self._launch(wf_id, "calibrate alias")
         return response
 
     def _on_stop(self, request, response):
@@ -341,378 +498,50 @@ class TaskManagerNode(Node):
             return response
 
         self._stop_requested.set()
-        self._publish_status(TaskStatus.STATE_STOPPING, "stop requested — canceling active goal")
+        self._publish_status(
+            TaskStatus.STATE_STOPPING,
+            "stop requested — canceling active goal",
+            self._last_status[2],
+        )
         response.success = True
         response.message = "stop requested (cancels the active motion goal)"
         return response
 
-    def _on_calibrate(self, request, response):
-        ok, why = self._robot_available()
-        if not ok:
-            response.success = False
-            response.message = why
-            return response
-
-        if not self._grid_configured() or \
-           list(self.get_parameter("calibration_z_levels_mm").value) == [0.0]:
-            response.success = False
-            response.message = (
-                "calibration grid not configured — set calibration_x_range_mm / "
-                "calibration_y_range_mm / calibration_z_levels_mm to safe bounds"
-            )
-            return response
-
-        if not self._move_client.server_is_ready():
-            response.success = False
-            response.message = "/cobot/move_to_pose action server not available"
-            return response
-
-        for client, name in (
-            (self._cal_begin_client, "/vision/calibration_begin"),
-            (self._cal_sample_client, "/vision/calibration_sample"),
-            (self._cal_compute_client, "/vision/calibration_compute"),
-        ):
-            if not client.service_is_ready():
-                response.success = False
-                response.message = f"{name} not available"
-                return response
-
-        if not self._operation_lock.acquire(blocking=False):
-            response.success = False
-            response.message = "a task is already running"
-            return response
-
-        self._stop_requested.clear()
-        poses = self._calibration_poses("calibration_grid_size", "calibration_z_levels_mm")
-        self._operation_thread = threading.Thread(
-            target=self._run_calibration, args=(poses, "calibration"), daemon=True
-        )
-        self._operation_thread.start()
-
-        response.success = True
-        response.message = "calibration started — progress on /task/status"
-        return response
-
     # ------------------------------------------------------------------
-    # Targets handoff (topic is data, not a trigger)
+    # Startup calibration: wait for readiness, then launch the workflow
     # ------------------------------------------------------------------
-
-    def _on_targets(self, msg: CanTargetArray):
-        with self._targets_lock:
-            if not self._awaiting_targets:
-                self.get_logger().info(
-                    f"ignoring {len(msg.targets)} targets — no scan in flight"
-                )
-                return
-            self._targets_slot = list(msg.targets)
-            self._awaiting_targets = False
-        self._targets_event.set()
-
-    def _await_targets(self, timeout: float) -> list | None:
-        """Wait for the targets produced by the scan we just requested.
-        Returns None on stop or timeout."""
-        deadline = time.monotonic() + timeout
-        while not self._targets_event.wait(timeout=0.2):
-            if self._stop_requested.is_set() or time.monotonic() > deadline:
-                with self._targets_lock:
-                    self._awaiting_targets = False
-                return None
-        with self._targets_lock:
-            return self._targets_slot
-
-    # ------------------------------------------------------------------
-    # Task: scan → pick layer
-    # ------------------------------------------------------------------
-
-    def _run_pick_cycle(self):
-        """Owns self._operation_lock (acquired by _on_start); releases on exit."""
-        try:
-            self._publish_status(TaskStatus.STATE_SCANNING, "requesting scan", "pick_layer")
-
-            with self._targets_lock:
-                self._awaiting_targets = True
-                self._targets_slot = None
-                self._targets_event.clear()
-
-            scan = self._call(self._scan_client, Trigger.Request(), timeout=10.0)
-            if not scan.success:
-                with self._targets_lock:
-                    self._awaiting_targets = False
-                self._publish_status(TaskStatus.STATE_ERROR, f"scan refused: {scan.message}")
-                return
-
-            timeout = float(self.get_parameter("scan_timeout_sec").value)
-            targets = self._await_targets(timeout)
-
-            if self._stop_requested.is_set():
-                self._publish_status(TaskStatus.STATE_IDLE, "stopped while waiting for scan")
-                return
-            if targets is None:
-                self._publish_status(
-                    TaskStatus.STATE_ERROR, f"no targets within {timeout:.0f}s of scan"
-                )
-                return
-            if not targets:
-                self._publish_status(TaskStatus.STATE_IDLE, "scan found no cans")
-                return
-
-            report = LayerReport()
-            report.overall_ok = True
-
-            for index, can in enumerate(targets):
-                if self._stop_requested.is_set():
-                    self.get_logger().warn(f"stop — abandoning layer at can {index + 1}")
-                    report.overall_ok = False
-                    break
-
-                self._publish_status(
-                    TaskStatus.STATE_PICKING,
-                    f"picking can at ({can.real_x:.1f}, {can.real_y:.1f}, rz={can.real_rz:.1f})",
-                    "pick_layer",
-                    index + 1,
-                    len(targets),
-                )
-
-                goal = PickCan.Goal(target=can)
-                result = self._run_action(
-                    self._pick_client, PickCan, "/cobot/pick_can", goal, PICK_TIMEOUT_SEC
-                )
-
-                if result.success:
-                    report.successes += 1
-                else:
-                    report.failures += 1
-                    report.overall_ok = False
-                    self.get_logger().warn(f"pick {index + 1} failed: {result.message}")
-
-                self._publish_pick_event(index + 1, len(targets), can, result)
-
-            report.header.stamp = self.get_clock().now().to_msg()
-            self._report_pub.publish(report)
-            self._publish_status(
-                TaskStatus.STATE_IDLE,
-                f"layer done: {report.successes} ok / {report.failures} failed",
-            )
-
-        except Exception as e:  # noqa: BLE001 — a failed task must not kill the node
-            self.get_logger().error(f"pick cycle crashed: {e}")
-            self._publish_status(TaskStatus.STATE_ERROR, str(e))
-
-        finally:
-            with self._targets_lock:
-                self._awaiting_targets = False
-            self._operation_lock.release()
-
-    def _publish_pick_event(self, index: int, total: int, can, result):
-        """Report one can's outcome, then run the post-pick depth check.
-
-        The "second depth scan" asks localization whether a can is STILL at
-        the target: present == False confirms the pick. The verdict is
-        reported on /task/pick_event only — it does not (yet) gate the
-        layer report or trigger a rescan; the UI keeps that decision behind
-        a flag until the check is trusted on the real cell.
-        """
-        event = PickEvent()
-        event.index = int(index)
-        event.total = int(total)
-        event.target = can
-        event.detection_index = int(can.detection_index)
-        event.measured_z = -1.0
-        event.message = result.message
-        if result.success:
-            event.outcome = PickEvent.OUTCOME_PICKED
-        elif self._stop_requested.is_set():
-            event.outcome = PickEvent.OUTCOME_SKIPPED
-        else:
-            event.outcome = PickEvent.OUTCOME_FAILED
-
-        if result.success:
-            if not self._verify_client.service_is_ready():
-                event.message += " (verify_target unavailable)"
-            else:
-                try:
-                    verify = self._call(
-                        self._verify_client, VerifyTarget.Request(target=can), VERIFY_TIMEOUT_SEC
-                    )
-                    event.verify_ran = True
-                    event.verified = not verify.present
-                    event.measured_z = float(verify.measured_z)
-                    if verify.present:
-                        event.message += " (WARNING: depth still shows a can at the target)"
-                        self.get_logger().warn(
-                            f"pick {index}: verify_target says the can is still present "
-                            f"(measured z {verify.measured_z:.1f} mm)"
-                        )
-                except TimeoutError as e:
-                    event.message += f" (verify timed out: {e})"
-                except Exception as e:  # noqa: BLE001 — verification must never break the loop
-                    event.message += f" (verify failed: {e})"
-
-        event.header.stamp = self.get_clock().now().to_msg()
-        self._pick_event_pub.publish(event)
-
-    # ------------------------------------------------------------------
-    # Task: calibration (movement loop here, math in localization_node)
-    # ------------------------------------------------------------------
-
-    def _calibration_poses(self, grid_size_param: str, z_levels_param: str):
-        """Grid of (x, y, z) poses over the shared x/y ranges, from the named
-        grid-size and z-levels params — lets the full and startup runs share
-        one builder with different densities."""
-        x_min, x_max = self.get_parameter("calibration_x_range_mm").value
-        y_min, y_max = self.get_parameter("calibration_y_range_mm").value
-        z_levels = list(self.get_parameter(z_levels_param).value)
-        nx, ny = (int(v) for v in self.get_parameter(grid_size_param).value)
-
-        # linspace by hand to avoid importing numpy just for this
-        def spread(lo: float, hi: float, n: int) -> list[float]:
-            if n <= 1:
-                return [(lo + hi) / 2.0]
-            step = (hi - lo) / (n - 1)
-            return [lo + i * step for i in range(n)]
-
-        return [
-            (x, y, z)
-            for z in z_levels
-            for y in spread(y_min, y_max, ny)
-            for x in spread(x_min, x_max, nx)
-        ]
-
-    def _grid_configured(self) -> bool:
-        """True once the shared x/y ranges are set (zeros = unconfigured)."""
-        return not (
-            list(self.get_parameter("calibration_x_range_mm").value) == [0.0, 0.0]
-            or list(self.get_parameter("calibration_y_range_mm").value) == [0.0, 0.0]
-        )
 
     def _run_startup_calibration(self):
-        """Auto extrinsic re-calibration at boot: wait for the robot and the
-        services, then run the small grid once. Skips (no motion) if the grid
-        is unconfigured or nothing comes up in time; a failed fit keeps the
-        previously saved transform."""
-        if not self._grid_configured():
-            self.get_logger().info(
-                "startup calibration skipped — calibration grid not configured"
+        """Auto extrinsic re-calibration at boot. Skips (no motion) if the
+        grid is unconfigured or nothing comes up in time; a failed fit keeps
+        the previously saved transform."""
+        wf_id = str(self.get_parameter("startup_calibration_workflow").value) or "startup_calibration"
+        wf = WORKFLOWS.get(wf_id)
+        if wf is None or not hasattr(wf, "grid_configured"):
+            self.get_logger().warn(
+                f"startup calibration skipped — '{wf_id}' is not a registered calibration workflow"
             )
+            return
+        ctx = WorkflowContext(self, wf)
+
+        if not wf.grid_configured(ctx):
+            self.get_logger().info("startup calibration skipped — calibration grid not configured")
             return
 
         deadline = time.monotonic() + float(
             self.get_parameter("startup_calibration_wait_sec").value
         )
         while time.monotonic() < deadline:
-            ready, _ = self._robot_available()
-            services_up = (
-                self._move_client.server_is_ready()
-                and self._cal_begin_client.service_is_ready()
-                and self._cal_sample_client.service_is_ready()
-                and self._cal_compute_client.service_is_ready()
-            )
-            if ready and services_up:
+            ok, _ = wf.check_ready(ctx)
+            if ok:
                 break
             time.sleep(1.0)
         else:
-            self.get_logger().warn(
-                "startup calibration skipped — robot/services not ready in time"
-            )
+            self.get_logger().warn("startup calibration skipped — robot/services not ready in time")
             return
 
-        if not self._operation_lock.acquire(blocking=False):
-            self.get_logger().info("startup calibration skipped — a task is already running")
-            return
-
-        self._stop_requested.clear()
-        poses = self._calibration_poses(
-            "startup_calibration_grid_size", "startup_calibration_z_levels_mm"
-        )
-        self._run_calibration(poses, "startup calibration")
-
-    def _run_calibration(self, poses, label: str):
-        """Owns self._operation_lock (acquired by the caller); releases on exit."""
-        try:
-            rx, ry, rz = self.get_parameter("calibration_orientation_deg").value
-            settle = float(self.get_parameter("calibration_settle_sec").value)
-            sample_timeout = float(
-                self.get_parameter("calibration_sample_timeout_sec").value
-            )
-
-            self._publish_status(
-                TaskStatus.STATE_CALIBRATING,
-                f"{label} starting: {len(poses)} poses",
-                label,
-                0,
-                len(poses),
-            )
-
-            # Vision clears its sample buffer and warms up the red-dot model.
-            begin = self._call(self._cal_begin_client, Trigger.Request(), CAL_BEGIN_TIMEOUT_SEC)
-            if not begin.success:
-                self._publish_status(
-                    TaskStatus.STATE_ERROR, f"{label} begin refused: {begin.message}"
-                )
-                return
-
-            collected = 0
-            for index, (x, y, z) in enumerate(poses):
-                if self._stop_requested.is_set():
-                    self._publish_status(
-                        TaskStatus.STATE_IDLE,
-                        f"{label} aborted by stop at pose {index + 1}/{len(poses)}",
-                    )
-                    return
-
-                pose_label = f"pose {index + 1}/{len(poses)} ({x:.0f}, {y:.0f}, {z:.0f})"
-                self._publish_status(
-                    TaskStatus.STATE_CALIBRATING,
-                    f"{pose_label} — {collected} samples so far",
-                    label,
-                    index + 1,
-                    len(poses),
-                )
-
-                goal = MoveToPose.Goal(x=x, y=y, z=z, rx=rx, ry=ry, rz=rz)
-                move = self._run_action(
-                    self._move_client, MoveToPose, "/cobot/move_to_pose", goal, MOVE_TIMEOUT_SEC
-                )
-                if not move.success:
-                    self.get_logger().warn(f"{pose_label}: move failed — skipped ({move.message})")
-                    continue
-
-                time.sleep(settle)  # let vibration die before vision measures
-
-                sample = self._call(
-                    self._cal_sample_client,
-                    CalibrationSample.Request(x=x, y=y, z=z),
-                    sample_timeout,
-                )
-                if sample.success:
-                    collected = sample.sample_count
-                else:
-                    self.get_logger().warn(f"{pose_label}: no sample ({sample.message})")
-
-            self._publish_status(
-                TaskStatus.STATE_CALIBRATING,
-                f"{label}: grid done, {collected} samples — computing transform",
-                label,
-                len(poses),
-                len(poses),
-            )
-
-            compute = self._call(self._cal_compute_client, Trigger.Request(), CAL_COMPUTE_TIMEOUT_SEC)
-            if compute.success:
-                self._publish_status(
-                    TaskStatus.STATE_IDLE, f"{label} complete: {compute.message}"
-                )
-            else:
-                self._publish_status(
-                    TaskStatus.STATE_ERROR, f"{label} failed: {compute.message}"
-                )
-
-        except Exception as e:  # noqa: BLE001 — a failed task must not kill the node
-            self.get_logger().error(f"{label} crashed: {e}")
-            self._publish_status(TaskStatus.STATE_ERROR, f"{label} crashed: {e}")
-
-        finally:
-            self._operation_lock.release()
+        ok, message = self._launch(wf.id, "startup")
+        (self.get_logger().info if ok else self.get_logger().warn)(f"startup calibration: {message}")
 
 
 def main(args=None):

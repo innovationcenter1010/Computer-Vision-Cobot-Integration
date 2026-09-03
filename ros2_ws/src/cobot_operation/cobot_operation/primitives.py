@@ -22,10 +22,11 @@ from rclpy.task import Future
 
 from cobot_interfaces.action import MoveToPose
 from cobot_interfaces.msg import CobotState
-from cobot_interfaces.srv import SetOutputBit
+from cobot_interfaces.srv import ConvertPose, SetOutputBit
 
 from cobot_operation.geometry import Pose6
 from cobot_operation.report import JobResult
+from cobot_operation.trajectory_store import ConvertResult
 
 GOAL_ACK_TIMEOUT_S = 5.0
 
@@ -51,6 +52,11 @@ class RosPrimitives:
         self._move = ActionClient(node, MoveToPose, "/cobot/move_to_pose", callback_group=group)
         self._set_output = node.create_client(
             SetOutputBit, "/cobot/set_output_bit", callback_group=group
+        )
+        # Controller kinematics for re-expressing remembered poses in another
+        # tool file. Deliberately NOT part of ready(): a pick never needs it.
+        self._convert = node.create_client(
+            ConvertPose, "/cobot/convert_pose", callback_group=group
         )
         node.create_subscription(
             CobotState, "/cobot/state", self._on_state, 10, callback_group=group
@@ -107,6 +113,25 @@ class RosPrimitives:
     def is_paused(self) -> bool:
         return bool(self._state is not None and self._state.paused)
 
+    def convert_ready(self) -> bool:
+        return self._convert.service_is_ready()
+
+    def active_tool(self) -> Optional[Tuple[int, str]]:
+        """(active_tool_number, active_tool_name) from the last /cobot/state."""
+        s = self._state
+        if s is None:
+            return None
+        return int(s.active_tool_number), str(s.active_tool_name)
+
+    def current_pose_with_joints(self) -> Optional[Tuple[Pose6, list]]:
+        """Current TCP pose (tagged with pose_tool_number) + joints, or None
+        when the robot is not connected / no state yet."""
+        s = self._state
+        if s is None or not s.connected:
+            return None
+        pose = Pose6(s.x, s.y, s.z, s.rx, s.ry, s.rz, tool_number=int(s.pose_tool_number))
+        return pose, [float(v) for v in s.joints_deg]
+
     # ------------------------------------------------------------------
     # awaiting helpers (no asyncio loop here — rclpy futures + timers)
     # ------------------------------------------------------------------
@@ -158,6 +183,7 @@ class RosPrimitives:
         goal.x, goal.y, goal.z = float(pose.x), float(pose.y), float(pose.z)
         goal.rx, goal.ry, goal.rz = float(pose.rx), float(pose.ry), float(pose.rz)
         goal.motion_profile = profile or ""
+        goal.tool_number = int(pose.tool_number)  # -1 = active tool (cobot_control resolves)
         payload = f"{pose}" + (f" [{profile}]" if profile else "")
 
         if not self._move.server_is_ready():
@@ -189,6 +215,27 @@ class RosPrimitives:
             "move", bool(res.success), 0 if res.success else int(res.status_code),
             res.message, payload,
         )
+
+    async def convert_pose(self, pose: Pose6, to_tool: int, joints_deg=None) -> ConvertResult:
+        """Ask cobot_control to re-express `pose` (in pose.tool_number) in
+        tool file `to_tool` through the controller kinematics. Transport
+        problems become ConvertResult(ok=False)."""
+        if not self._convert.service_is_ready():
+            return ConvertResult(False, message="/cobot/convert_pose not available")
+        req = ConvertPose.Request()
+        req.x, req.y, req.z = float(pose.x), float(pose.y), float(pose.z)
+        req.rx, req.ry, req.rz = float(pose.rx), float(pose.ry), float(pose.rz)
+        req.from_tool = int(pose.tool_number)
+        req.to_tool = int(to_tool)
+        req.joints_deg = [float(v) for v in joints_deg] if joints_deg else []
+        res = await self._await(self._convert.call_async(req), self._service_timeout)
+        if res is None:
+            return ConvertResult(False, message="convert_pose timed out")
+        if not res.success:
+            return ConvertResult(False, message=f"[{res.status_code}] {res.message}")
+        out = Pose6(res.x, res.y, res.z, res.rx, res.ry, res.rz, tool_number=int(res.to_tool))
+        joints = tuple(float(v) for v in res.joints_deg) if len(res.joints_deg) == 6 else None
+        return ConvertResult(True, pose=out, joints_deg=joints, message=res.message)
 
     def cancel_inflight(self) -> bool:
         """Fire-and-forget cancel of the running move (called from the

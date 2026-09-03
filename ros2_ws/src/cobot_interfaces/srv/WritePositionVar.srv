@@ -5,6 +5,7 @@ float64 z
 float64 rx
 float64 ry
 float64 rz
+int32 tool_number -1      # tool file the pose is expressed in; -1 = active tool
 ---
 bool success
 int32 status_code

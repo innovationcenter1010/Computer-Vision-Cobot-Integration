@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Export a trained .pt from weights/ to portable ONNX under models/.
+"""Export a trained .pt from weights/ to portable ONNX under runtime_models/.
 
-models/ holds ONNX only — it is the bind-mounted hand-off to the container.
-.pt files are training artefacts and stay in weights/ (gitignored).
+runtime_models/ (repo root) holds ONNX only — it is the bind-mounted hand-off
+to the container (/ws/runtime_models). .pt files are training artefacts and
+stay in weights/ (gitignored).
 
 Each export gets its own directory with the same manifest layout the YOLOE
 exporter writes (sha256, input geometry, output tensor shapes, class names),
@@ -13,7 +14,7 @@ so a future consumer node can validate any model the same way:
 
 Run from vision_workspace/ inside .venv:
 
-    python tools/export_to_onnx.py cans_obb_best                 # weights/cans_obb_best.pt -> models/cans_obb_best/
+    python tools/export_to_onnx.py cans_obb_best                 # weights/cans_obb_best.pt -> runtime_models/cans_obb_best/
     python tools/export_to_onnx.py green_light_best --imgsz 480 640
     python tools/export_to_onnx.py red_dot_best --name red_dot_v1
 
@@ -126,7 +127,7 @@ def main() -> None:
     print(f"[export] input  {inputs[0]['name']} {in_shape}")
     for o in outputs:
         print(f"[export] output {o['name']} {o['shape']}")
-    print("[export] done — visible in the container at /ws/vision_workspace/models/"
+    print("[export] done — visible in the container at /ws/runtime_models/"
           f"{name}/ (bind mount, no rebuild)")
 
 

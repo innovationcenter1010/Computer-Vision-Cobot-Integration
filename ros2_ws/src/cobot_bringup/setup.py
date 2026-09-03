@@ -12,7 +12,7 @@ setup(
         (f"share/{package_name}/launch", ["launch/robot.launch.py"]),
         (
             f"share/{package_name}/config",
-            ["config/cobot_params.yaml", "config/trajectories.json"],
+            ["config/cobot_params.yaml", "config/cobot_setup.yaml", "config/trajectories.json"],
         ),
     ],
     install_requires=["setuptools"],
