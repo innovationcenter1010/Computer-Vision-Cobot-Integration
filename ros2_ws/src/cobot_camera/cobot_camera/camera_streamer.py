@@ -23,7 +23,9 @@ so it would turn a publisher framing choice into a crash loop here.
 """
 
 import time
+import zlib
 
+import cv2
 import zmq
 import numpy as np
 import struct
@@ -33,6 +35,35 @@ from typing import Optional, Callable
 
 HEADER_FMT  = "<BIHHBI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
+
+# Header "type" byte (see stream_packet.h in the Astra streamer)
+TYPE_COLOR_RAW  = 0   # raw RGB888
+TYPE_DEPTH_RAW  = 1   # raw int16 mm
+TYPE_COLOR_JPEG = 2   # JPEG -> decoded to RGB888
+TYPE_DEPTH_ZLIB = 3   # zlib( per-row delta of uint16 depth ) -> int16 mm, lossless
+
+
+def decode_payload(stream_type, w, h, channels, buffer, offset):
+    """Turn a frame payload into the same arrays raw frames always produced:
+    colour (h, w, 3) uint8 RGB, depth (h, w) int16 mm. Returns None if the
+    payload can't be decoded (frame is then dropped, not crashed on)."""
+    if stream_type == TYPE_COLOR_RAW:
+        return np.frombuffer(buffer, dtype=np.uint8, offset=offset).reshape(h, w, channels)
+    if stream_type == TYPE_DEPTH_RAW:
+        return np.frombuffer(buffer, dtype=np.int16, offset=offset).reshape(h, w)
+    if stream_type == TYPE_COLOR_JPEG:
+        jpg = np.frombuffer(buffer, dtype=np.uint8, offset=offset)
+        bgr = cv2.imdecode(jpg, cv2.IMREAD_COLOR)
+        if bgr is None or bgr.shape[:2] != (h, w):
+            return None
+        return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    if stream_type == TYPE_DEPTH_ZLIB:
+        raw = zlib.decompress(memoryview(buffer)[offset:])
+        if len(raw) != w * h * 2:
+            return None
+        delta = np.frombuffer(raw, dtype=np.uint16).reshape(h, w)
+        return np.cumsum(delta, axis=1, dtype=np.uint16).view(np.int16)
+    return None
 
 COLOR_ENDPOINT = "tcp://host.docker.internal:5550"
 DEPTH_ENDPOINT = "tcp://host.docker.internal:5551"
@@ -237,11 +268,16 @@ class CameraStream:
                     )
                     continue
 
-                # Zero-copy view into the payload buffer.
-                if stream_type == 0:
-                    img = np.frombuffer(buffer, dtype=np.uint8, offset=offset).reshape(h, w, channels)
-                else:
-                    img = np.frombuffer(buffer, dtype=np.int16, offset=offset).reshape(h, w)
+                # Raw types: zero-copy view. Compressed types (2/3): decoded
+                # here, only for the newest frame (stale ones skipped above).
+                try:
+                    img = decode_payload(stream_type, w, h, channels, buffer, offset)
+                except Exception as e:
+                    img = None
+                    print(f"[{label}] decode error: {e}", flush=True)
+                if img is None:
+                    print(f"[{label}] could not decode frame type {stream_type} — dropped", flush=True)
+                    continue
 
                 frame = Frame(index=frame_index, width=w, height=h, data=img)
 
@@ -305,4 +341,4 @@ if __name__ == "__main__":
         # Poll the latest frame directly after the task
         color = stream.latest_color
         depth = stream.latest_depth
-        print(f"After task — latest color frame: {color.index}, depth frame: {depth.index}")
+        print(f"After task — latest color frame: {color.index}, depth frame: {depth.index}")

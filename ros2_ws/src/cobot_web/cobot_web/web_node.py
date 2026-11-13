@@ -177,12 +177,12 @@ TASK_STATE_NAMES = {
 }
 
 
-def _encode_jpeg_b64(img: np.ndarray | None) -> str | None:
+def _encode_jpeg_b64(img: np.ndarray | None, quality: int = 95) -> str | None:
     if img is None:
         return None
     if img.dtype != np.uint8:
         img = np.clip(img, 0, 255).astype(np.uint8)
-    ok, buffer = cv2.imencode(".jpg", img)
+    ok, buffer = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
     if not ok:
         return None
     return base64.b64encode(buffer).decode("ascii")
@@ -194,6 +194,13 @@ class WebNode(Node):
 
         self.declare_parameter("port", 8000)
         self.declare_parameter("web_stream_hz", 15.0)
+        # Dashboard image size (Nov 2026): port 8000 goes through Docker
+        # Desktop's port forwarding, which is slow on the cobot PC. At the old
+        # JPEG quality 95 + full-size depth (~195 KB/frame) the browser fell
+        # seconds behind. Quality 70 + half-size depth is ~60 KB/frame.
+        # Display only — detection/localization never see these images.
+        self.declare_parameter("web_jpeg_quality", 70)
+        self.declare_parameter("web_depth_scale", 0.5)
         # The bringup params YAML — source of truth for GET/POST /api/config.
         self.declare_parameter("params_file", "")
         # Developer dashboard (/dev): cell setup YAML (per-param edits via
@@ -348,6 +355,8 @@ class WebNode(Node):
         self._set_point_client = self.create_client(SetTeachPoint, "/cobot/set_teach_point")
 
         stream_hz = float(self.get_parameter("web_stream_hz").value)
+        self._jpeg_quality = int(self.get_parameter("web_jpeg_quality").value)
+        self._depth_scale = float(self.get_parameter("web_depth_scale").value)
         self._stream_hz_target = stream_hz
         self.create_timer(1.0 / stream_hz, self._stream_frames)
 
@@ -422,11 +431,14 @@ class WebNode(Node):
             # and far pixels red. applyColorMap returns BGR, which is exactly
             # what imencode wants.
             depth_vis = cv2.applyColorMap(depth_norm.astype(np.uint8), cv2.COLORMAP_JET)
+            if 0.0 < self._depth_scale < 1.0:
+                depth_vis = cv2.resize(depth_vis, None, fx=self._depth_scale,
+                                       fy=self._depth_scale, interpolation=cv2.INTER_AREA)
 
         return {
             "type": "camera_frame",
-            "rgb": _encode_jpeg_b64(color_bgr),
-            "depth": _encode_jpeg_b64(depth_vis),
+            "rgb": _encode_jpeg_b64(color_bgr, self._jpeg_quality),
+            "depth": _encode_jpeg_b64(depth_vis, self._jpeg_quality),
         }
 
     def _on_targets(self, msg: TargetArray):

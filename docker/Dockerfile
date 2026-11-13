@@ -45,11 +45,12 @@ RUN curl -fsSL -o /tmp/ort.tgz \
 
 # ---- 3. remaining pip deps ----
 RUN pip3 install --no-cache-dir \
-    opencv-python-headless \
-    fastapi \
-    "uvicorn[standard]" \
-    pyzmq \
-    jinja2
+    "numpy==1.26.4" \
+    "opencv-python-headless==4.10.0.84" \
+    "fastapi==0.143.1" \
+    "uvicorn[standard]==0.54.0" \
+    "pyzmq==27.2.0" \
+    "jinja2==3.1.6"
 
 # ---- 3b. build-tooling compat ----
 # The pip layers pull setuptools >=71 into /usr/local, which requires
@@ -125,11 +126,12 @@ RUN apt-get update && apt-get install -y \
 
 # ---- 2. remaining pip deps ----
 RUN pip3 install --no-cache-dir \
-    opencv-python-headless \
-    fastapi \
-    "uvicorn[standard]" \
-    pyzmq \
-    jinja2
+    "numpy==1.26.4" \
+    "opencv-python-headless==4.10.0.84" \
+    "fastapi==0.143.1" \
+    "uvicorn[standard]==0.54.0" \
+    "pyzmq==27.2.0" \
+    "jinja2==3.1.6"
 
 WORKDIR /ws
 

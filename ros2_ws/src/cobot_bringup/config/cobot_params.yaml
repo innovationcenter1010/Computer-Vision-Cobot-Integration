@@ -140,7 +140,7 @@ task_manager:
 web_node:
   ros__parameters:
     port: 8000
-    web_stream_hz: 15.0
+    web_stream_hz: 8.0
     results_dir: /ws/vision_workspace/operation/results
     cobot_state_hz: 5.0
     calibration_model_ids:

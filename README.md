@@ -740,7 +740,7 @@ Other notable parameters:
 | `cobot_setup.yaml` | `mount_yaw_offset_deg` | added to every commanded `rz` in `cobot_control` (all tools, all callers) to compensate for the physical toolhead's mounting rotation — software-only, never written to the YRC1000 |
 | `task_manager` | `default_workflow`, `scan_timeout_sec`, `calibration_grid_size`, `calibration_orientation_deg`, `calibration_settle_sec`, `calibration_sample_timeout_sec`, `startup_calibration_workflow`, `startup_calibration_grid_size`, `startup_calibration_wait_sec` | `/task/start` runs `default_workflow` (`pick_layer`); auto variants read `auto_calibration_*` / `auto_startup_calibration_*` grids |
 | `health_monitor` | `expected_nodes`, `stale_factor`, `summary_period_s` | |
-| `web_node` | `port`, `web_stream_hz`, `results_dir` | |
+| `web_node` | `port`, `web_stream_hz`, `web_jpeg_quality` (70), `web_depth_scale` (0.5), `results_dir` | quality/scale affect the browser preview only |
 
 Generated / per-machine files (gitignored): `config/calibration.yaml`,
 `vision_workspace/operation/camera_intrinsics.json`, all `*.pt` weights,

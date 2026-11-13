@@ -15,7 +15,7 @@ runtime:                      # models the application runs every cycle
     # auto-detected; iou is unused for this layout).
     path: cans_obb_best/cans_obb_best.onnx
     type: obb
-    confidence: 0.02
+    confidence: 0.3
     iou: 0.40
     max_detections: 20
     remove_duplicates: true            # second pass: centre-distance filter
